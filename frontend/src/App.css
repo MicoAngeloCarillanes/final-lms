@@ -1,0 +1,111 @@
+/* ============================================================
+   App.css — EduLMS Global Stylesheet  (Dark Theme Redesign)
+   ============================================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap');
+
+/* ── Reset & Base ─────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body, #root {
+  height: 100vh;
+  overflow: hidden;
+  font-family: 'Outfit', sans-serif;
+  background: #0f172a;
+  color: #e2e8f0;
+}
+
+/* ── Scrollbar ──────────────────────────────────────────────── */
+::-webkit-scrollbar           { width: 4px; height: 4px; }
+::-webkit-scrollbar-track     { background: #1e293b; }
+::-webkit-scrollbar-thumb     { background: #334155; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover{ background: #475569; }
+input[type=number]::-webkit-inner-spin-button { opacity: 1; }
+
+/* ── Material Detail Transitions ─────────────────────────── */
+@keyframes matSlideIn { from { transform: translateX(32px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+@keyframes matFadeUp  { from { transform: translateY(10px); opacity: 0; } to { transform: translateY(0);    opacity: 1; } }
+.mat-detail-enter { animation: matSlideIn 0.28s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.mat-fade-up      { animation: matFadeUp  0.22s cubic-bezier(0.22, 1, 0.36, 1) both; }
+
+/* ── Markdown Body ─────────────────────────────────────────── */
+.md-body { line-height: 1.75; color: #cbd5e1; }
+.md-body h2 { font-size: 16px; font-weight: 800; color: #f1f5f9; margin: 18px 0 7px; letter-spacing: -0.02em; }
+.md-body p  { margin: 0 0 11px; font-size: 13.5px; }
+.md-body ul, .md-body ol { margin: 0 0 11px 20px; font-size: 13.5px; }
+.md-body li { margin-bottom: 4px; }
+.md-body code { font-family: 'JetBrains Mono', monospace; font-size: 12px; background: #1e293b; padding: 1px 5px; border-radius: 4px; color: #a5b4fc; }
+.md-body pre  { background: #020617; border-radius: 8px; padding: 13px 16px; margin: 0 0 13px; overflow-x: auto; border: 1px solid #1e293b; }
+.md-body pre code { background: none; color: #a5f3fc; padding: 0; font-size: 12px; line-height: 1.65; }
+.md-body table { width: 100%; border-collapse: collapse; margin: 0 0 13px; font-size: 12.5px; }
+.md-body th { background: #0f172a; color: #64748b; padding: 7px 11px; text-align: left; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }
+.md-body td { padding: 7px 11px; border-bottom: 1px solid #1e293b; color: #cbd5e1; }
+.md-body tr:last-child td { border-bottom: none; }
+.md-body strong { font-weight: 700; color: #f1f5f9; }
+
+/* ── Drop Zone ─────────────────────────────────────────────── */
+.dropzone { border: 2px dashed #334155; border-radius: 10px; transition: all .2s; background: #1e293b; cursor: pointer; }
+.dropzone:hover, .dropzone.drag-over { border-color: #6366f1; background: rgba(99,102,241,.1); }
+
+/* ── Sidebar Material Item ─────────────────────────────────── */
+.mat-item:hover { background: rgba(99,102,241,.1) !important; }
+
+/* ── Exam Builder ──────────────────────────────────────────── */
+@keyframes builderIn { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: translateY(0); } }
+.exam-builder-enter { animation: builderIn 0.25s cubic-bezier(0.22, 1, 0.36, 1) both; }
+
+.q-card { border: 1.5px solid #334155; border-radius: 10px; background: #1e293b; transition: border-color .15s, box-shadow .15s; }
+.q-card:hover  { border-color: #4f46e5; }
+.q-card.active { border-color: #6366f1; box-shadow: 0 0 0 3px rgba(99,102,241,.15); }
+.q-card.preview{ border-color: #334155; pointer-events: none; }
+
+.mcq-option { display: flex; align-items: center; gap: 9px; padding: 8px 11px; border-radius: 7px; border: 1.5px solid #334155; cursor: pointer; transition: all .12s; color: #cbd5e1; background: #0f172a; }
+.mcq-option:hover   { border-color: #6366f1; background: rgba(99,102,241,.1); }
+.mcq-option.correct { border-color: #10b981; background: rgba(16,185,129,.1); }
+
+.tf-btn { flex: 1; padding: 10px; border: 1.5px solid #334155; border-radius: 8px; font-family: inherit; font-size: 13px; font-weight: 700; cursor: pointer; transition: all .15s; background: #0f172a; color: #94a3b8; }
+.tf-btn.selected-true  { border-color: #10b981; background: rgba(16,185,129,.12); color: #34d399; }
+.tf-btn.selected-false { border-color: #ef4444; background: rgba(239,68,68,.12);  color: #f87171; }
+
+.qtype-menu { position: absolute; top: calc(100% + 5px); right: 0; background: #1e293b; border: 1px solid #334155; border-radius: 9px; padding: 5px; z-index: 20; box-shadow: 0 8px 28px rgba(0,0,0,.4); min-width: 180px; }
+.qtype-item { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; color: #cbd5e1; transition: background .1s; }
+.qtype-item:hover { background: #334155; }
+
+.val-error { background: rgba(239,68,68,.12); border: 1px solid rgba(239,68,68,.3); border-radius: 7px; padding: 9px 13px; font-size: 12px; font-weight: 700; color: #f87171; display: flex; align-items: center; gap: 7px; }
+
+/* ── Exam Taker ────────────────────────────────────────────── */
+@keyframes examIn { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: translateY(0); } }
+.exam-enter { animation: examIn 0.3s cubic-bezier(0.22, 1, 0.36, 1) both; }
+
+.ans-opt { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-radius: 9px; border: 1.5px solid #334155; cursor: pointer; transition: all .15s; background: #1e293b; color: #cbd5e1; }
+.ans-opt:hover          { border-color: #6366f1; background: rgba(99,102,241,.1); }
+.ans-opt.selected       { border-color: #4f46e5; background: rgba(79,70,229,.15); }
+.ans-opt.correct-reveal { border-color: #10b981; background: rgba(16,185,129,.12); }
+.ans-opt.wrong-reveal   { border-color: #ef4444; background: rgba(239,68,68,.12); }
+
+.exam-timer { font-family: 'JetBrains Mono', monospace; font-size: 20px; font-weight: 900; letter-spacing: .04em; color: #e2e8f0; }
+.exam-timer.urgent { color: #f87171; animation: timerPulse 1s infinite; }
+@keyframes timerPulse { 0%, 100% { opacity: 1; } 50% { opacity: .5; } }
+
+.result-bar-wrap { height: 8px; background: #1e293b; border-radius: 4px; overflow: hidden; }
+.result-bar      { height: 100%; border-radius: 4px; transition: width .6s cubic-bezier(.22,1,.36,1); }
+
+/* ── Grade Table ───────────────────────────────────────────── */
+.grade-cell-pass { background: rgba(16,185,129,.15) !important; color: #34d399 !important; font-weight: 800; }
+.grade-cell-warn { background: rgba(245,158,11,.15)  !important; color: #fbbf24 !important; font-weight: 800; }
+.grade-cell-fail { background: rgba(239,68,68,.15)   !important; color: #f87171 !important; font-weight: 800; }
+.grade-cell-high { background: rgba(99,102,241,.15)  !important; color: #a5b4fc !important; font-weight: 900; }
+.drill-row td       { background: #1e293b !important; }
+.drill-row:hover td { background: #243347 !important; }
+
+/* ── Grading Modal ─────────────────────────────────────────── */
+@keyframes modalIn { from { opacity: 0; transform: scale(0.96) translateY(8px); } to { opacity: 1; transform: scale(1) translateY(0); } }
+.modal-overlay { position: fixed; inset: 0; z-index: 100; background: rgba(0,0,0,.65); backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center; }
+.modal-box { animation: modalIn 0.22s cubic-bezier(0.22, 1, 0.36, 1) both; }
+
+/* ── Sub Row ───────────────────────────────────────────────── */
+.sub-row:hover td { background: #243347 !important; }
+
+/* ── Edit Textarea ─────────────────────────────────────────── */
+.edit-textarea { border: 1px solid #334155; border-radius: 6px; padding: 8px 10px; font-size: 13px; font-family: inherit; resize: vertical; outline: none; width: 100%; color: #e2e8f0; background: #1e293b; min-height: 80px; }
+.edit-textarea:focus { border-color: #6366f1; box-shadow: 0 0 0 3px rgba(99,102,241,.15); }
