@@ -1,9 +1,16 @@
 /**
- * AdminSubAccounts.jsx — Create & manage sub-admin accounts
- * (Department admin, Organization admin, etc.)
- * Main admin can also approve/reject accounts submitted by sub-admins.
- *
+ * AdminSubAccounts.jsx
  * FOLDER: src/admin/pages/AdminSubAccounts.jsx
+ *
+ * Changes:
+ *  - Sub-admin type is determined by scope:
+ *      scope === "department" → "Department Admin" (full access)
+ *      any other scope        → "General Admin"    (announcements + chat only)
+ *  - Type badge column added to the grid so the main admin can see at a glance
+ *  - Create form labels updated to make the distinction clear
+ *  - Approval filter pills wired to activeFilter state (bug fix)
+ *  - Reactivate button for inactive sub-admins
+ *  - Fixed invisible "Account Details" title colour
  */
 import React, { useState, useEffect } from "react";
 import { supabase } from "../../supabaseClient";
@@ -12,26 +19,39 @@ import { Badge, Btn, Input, Sel, FF, Toast } from "../../components/ui";
 import TopBar from "../../components/TopBar";
 import LMSGrid from "../../components/LMSGrid";
 
+// scope → display meta
 const SCOPE_META = {
-  department:   { icon: "🏛️", color: "#a5b4fc", bg: "rgba(99,102,241,.15)"  },
-  organization: { icon: "🏢", color: "#34d399",  bg: "rgba(16,185,129,.15)" },
-  registrar:    { icon: "📋", color: "#fbbf24",  bg: "rgba(245,158,11,.15)" },
-  library:      { icon: "📚", color: "#60a5fa",  bg: "rgba(59,130,246,.15)" },
-  other:        { icon: "⚙️",  color: "#94a3b8",  bg: "rgba(100,116,139,.15)"},
+  department:   { icon: "🏛️", color: "#a5b4fc", bg: "rgba(99,102,241,.15)", typeLabel: "Department Admin",   typeColor: "purple"  },
+  organization: { icon: "🏢", color: "#34d399",  bg: "rgba(16,185,129,.15)", typeLabel: "General Admin",      typeColor: "success" },
+  registrar:    { icon: "📋", color: "#fbbf24",  bg: "rgba(245,158,11,.15)", typeLabel: "General Admin",      typeColor: "success" },
+  library:      { icon: "📚", color: "#60a5fa",  bg: "rgba(59,130,246,.15)", typeLabel: "General Admin",      typeColor: "success" },
+  other:        { icon: "⚙️",  color: "#94a3b8",  bg: "rgba(100,116,139,.15)",typeLabel: "General Admin",      typeColor: "default" },
 };
+
+const getType   = (scope) => scope === "department" ? "Department Admin" : "General Admin";
+const typeColor = (scope) => scope === "department" ? "purple" : "success";
+
+const SCOPE_OPTIONS = [
+  { value: "department",   label: "🏛️ Department  (Full access — accounts, passwords, announcements)" },
+  { value: "organization", label: "🏢 Organization (Announcements & chat only)" },
+  { value: "registrar",    label: "📋 Registrar    (Announcements & chat only)" },
+  { value: "library",      label: "📚 Library       (Announcements & chat only)" },
+  { value: "other",        label: "⚙️ Other          (Announcements & chat only)" },
+];
 
 const empty = { display_name: "", username: "", email: "", scope: "department", scope_ref: "", password: "" };
 
 export default function AdminSubAccounts({ user }) {
-  const [tab,         setTab]         = useState("sub-admins");   // "sub-admins" | "approvals"
-  const [subAdmins,   setSubAdmins]   = useState([]);
-  const [approvals,   setApprovals]   = useState([]);
-  const [form,        setForm]        = useState(empty);
-  const [errors,      setErrors]      = useState({});
-  const [toast,       setToast]       = useState("");
-  const [selApproval, setSelApproval] = useState(null);
-  const [mode,        setMode]        = useState("list");          // "list" | "create"
-  const [busy,        setBusy]        = useState(false);
+  const [tab,          setTab]          = useState("sub-admins");
+  const [subAdmins,    setSubAdmins]    = useState([]);
+  const [approvals,    setApprovals]    = useState([]);
+  const [form,         setForm]         = useState(empty);
+  const [errors,       setErrors]       = useState({});
+  const [toast,        setToast]        = useState("");
+  const [selApproval,  setSelApproval]  = useState(null);
+  const [mode,         setMode]         = useState("list");
+  const [busy,         setBusy]         = useState(false);
+  const [activeFilter, setActiveFilter] = useState("all");
 
   const showToast = (m) => { setToast(m); setTimeout(() => setToast(""), 2800); };
   const upd = (f, v) => setForm(p => ({ ...p, [f]: v }));
@@ -43,7 +63,11 @@ export default function AdminSubAccounts({ user }) {
 
   const pendingCount = approvals.filter(a => a.status === "pending").length;
 
-  // ── Create sub-admin ────────────────────────────────────────
+  const filteredApprovals = activeFilter === "all"
+    ? approvals
+    : approvals.filter(a => a.status === activeFilter);
+
+  // ── Create sub-admin ──────────────────────────────────────────────────────
   const submit = async () => {
     const e = {};
     if (!form.display_name.trim()) e.display_name = "Required";
@@ -53,11 +77,9 @@ export default function AdminSubAccounts({ user }) {
 
     setBusy(true);
     try {
-      // Hash the password via the same RPC used for regular accounts
       const { data: hashData, error: hashErr } = await supabase.rpc("hash_password", { plain: form.password });
-      if (hashErr || !hashData) { setErrors({ password: "Password hashing failed — check hash_password SQL function." }); setBusy(false); return; }
+      if (hashErr || !hashData) { setErrors({ password: "Password hashing failed." }); setBusy(false); return; }
 
-      // Insert into users table first
       const { data: newUser, error: uErr } = await supabase.from("users").insert({
         display_id:    `SA-${Date.now()}`,
         username:      form.username.trim(),
@@ -70,7 +92,6 @@ export default function AdminSubAccounts({ user }) {
 
       if (uErr) { setErrors({ username: uErr.message.includes("username") ? "Username taken" : uErr.message }); setBusy(false); return; }
 
-      // Insert into sub_admins
       const sa = await subAdminApi.create({
         user_id:      newUser.user_id,
         display_name: form.display_name.trim(),
@@ -84,19 +105,18 @@ export default function AdminSubAccounts({ user }) {
       setSubAdmins(prev => [sa, ...prev]);
       setForm(empty); setErrors({});
       setMode("list");
-      showToast(`Sub-admin "${sa.display_name}" created!`);
+      showToast(`${getType(form.scope)} "${sa.display_name}" created!`);
     } catch (err) { showToast("Error: " + err.message); }
     setBusy(false);
   };
 
-  // ── Approve / Reject account ────────────────────────────────
+  // ── Approve / Reject ──────────────────────────────────────────────────────
   const review = async (id, status) => {
     setBusy(true);
     try {
       const updated = await approvalApi.review(id, status, user._uuid);
 
       if (status === "approved") {
-        // Create the actual user account
         const a = approvals.find(x => x.id === id);
         if (a) {
           const { data: newUser, error: uErr } = await supabase.from("users").insert({
@@ -129,31 +149,40 @@ export default function AdminSubAccounts({ user }) {
     setBusy(false);
   };
 
-  const deactivate = async (id) => {
+  const setActive = async (id, isActive) => {
     try {
-      await subAdminApi.update(id, { is_active: false });
-      setSubAdmins(prev => prev.map(s => s.id === id ? { ...s, is_active: false } : s));
-      showToast("Sub-admin deactivated.");
+      await subAdminApi.update(id, { is_active: isActive });
+      setSubAdmins(prev => prev.map(s => s.id === id ? { ...s, is_active: isActive } : s));
+      showToast(isActive ? "Sub-admin reactivated." : "Sub-admin deactivated.");
     } catch (err) { showToast("Error: " + err.message); }
   };
 
-  // ── Grid columns ────────────────────────────────────────────
+  // ── Grid columns ──────────────────────────────────────────────────────────
   const subAdminCols = [
     { field: "display_name", header: "Name" },
-    { field: "username",     header: "Username", width: 120 },
-    { field: "scope",        header: "Scope", width: 110,
+    { field: "username",     header: "Username",  width: 120 },
+    { field: "scope",        header: "Type",      width: 160,
+      cellRenderer: (v) => (
+        <Badge color={typeColor(v)}>{getType(v)}</Badge>
+      )},
+    { field: "scope",        header: "Scope",     width: 110,
       cellRenderer: v => {
         const m = SCOPE_META[v] || SCOPE_META.other;
         return <span style={{ background: m.bg, color: m.color, fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 9999 }}>{m.icon} {v}</span>;
       }},
     { field: "scope_ref",    header: "Assigned To" },
     { field: "email",        header: "Email" },
-    { field: "is_active",    header: "Status", width: 90,
+    { field: "is_active",    header: "Status",    width: 90,
       cellRenderer: v => <Badge color={v ? "success" : "danger"}>{v ? "Active" : "Inactive"}</Badge> },
-    { field: "id", header: "Actions", width: 110, sortable: false,
-      cellRenderer: (_, row) => row.is_active
-        ? <Btn size="sm" variant="danger" onClick={e => { e.stopPropagation(); deactivate(row.id); }}>Deactivate</Btn>
-        : <span style={{ fontSize: 11, color: "#475569" }}>—</span>
+    { field: "id", header: "Actions", width: 140, sortable: false,
+      cellRenderer: (_, row) => (
+        <div style={{ display: "flex", gap: 5 }}>
+          {row.is_active
+            ? <Btn size="sm" variant="danger"  onClick={e => { e.stopPropagation(); setActive(row.id, false); }}>Deactivate</Btn>
+            : <Btn size="sm" variant="success" onClick={e => { e.stopPropagation(); setActive(row.id, true);  }}>Reactivate</Btn>
+          }
+        </div>
+      ),
     },
   ];
 
@@ -173,7 +202,7 @@ export default function AdminSubAccounts({ user }) {
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
       <TopBar
         title="Sub-Admin Management"
-        subtitle="Department, organization & other admin accounts"
+        subtitle="Create department admins (full access) or general admins (announcements & chat only)"
       />
 
       {toast && (
@@ -198,10 +227,11 @@ export default function AdminSubAccounts({ user }) {
       {/* ── Sub-admins tab ── */}
       {tab === "sub-admins" && (
         <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
-          {/* Grid */}
           <div style={{ flex: 1, padding: "14px 18px", display: "flex", flexDirection: "column", overflow: "hidden", background: "#0f172a", gap: 10 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: "#475569", textTransform: "uppercase", letterSpacing: "0.06em" }}>{subAdmins.length} Sub-Admin Accounts</div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#475569", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                {subAdmins.length} Sub-Admin Accounts
+              </div>
               <Btn onClick={() => setMode(mode === "create" ? "list" : "create")}>
                 {mode === "create" ? "✕ Cancel" : "➕ New Sub-Admin"}
               </Btn>
@@ -211,17 +241,46 @@ export default function AdminSubAccounts({ user }) {
             </div>
           </div>
 
-          {/* Create form drawer */}
+          {/* ── Create form drawer ── */}
           {mode === "create" && (
-            <div style={{ width: 320, borderLeft: "1px solid #334155", background: "#1e293b", padding: "18px 20px", overflowY: "auto", flexShrink: 0, display: "flex", flexDirection: "column", gap: 12 }}>
-              <div style={{ fontWeight: 800, fontSize: 14, color: "#f1f5f9", marginBottom: 4 }}>New Sub-Admin</div>
+            <div style={{ width: 360, borderLeft: "1px solid #334155", background: "#1e293b", padding: "18px 20px", overflowY: "auto", flexShrink: 0, display: "flex", flexDirection: "column", gap: 12 }}>
+              <div style={{ fontWeight: 800, fontSize: 14, color: "#f1f5f9", marginBottom: 2 }}>New Sub-Admin</div>
 
-              <FF label="Scope / Type" required>
-                <Sel value={form.scope} onChange={e => upd("scope", e.target.value)}>
-                  {Object.keys(SCOPE_META).map(s => <option key={s} value={s}>{SCOPE_META[s].icon} {s.charAt(0).toUpperCase()+s.slice(1)}</option>)}
-                </Sel>
-              </FF>
-              <FF label="Assigned To (e.g. CCS, Student Council)" required>
+              {/* Type explainer */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                {[
+                  { scope: "department", title: "Department Admin", desc: "Can create accounts, reset passwords, post announcements & chat", color: "#a5b4fc", bg: "rgba(99,102,241,.12)" },
+                  { scope: "other",      title: "General Admin",    desc: "Can only post announcements & chat",                             color: "#34d399", bg: "rgba(16,185,129,.12)" },
+                ].map(opt => (
+                  <button
+                    key={opt.scope}
+                    onClick={() => upd("scope", opt.scope === "other" ? form.scope !== "department" ? form.scope : "organization" : "department")}
+                    style={{
+                      border: `2px solid ${(opt.scope === "department") === (form.scope === "department") ? opt.color : "#334155"}`,
+                      borderRadius: 8, padding: "10px 12px", background: (opt.scope === "department") === (form.scope === "department") ? opt.bg : "transparent",
+                      textAlign: "left", cursor: "pointer", fontFamily: "inherit", transition: "all .15s",
+                    }}
+                  >
+                    <div style={{ fontWeight: 800, fontSize: 12, color: (opt.scope === "department") === (form.scope === "department") ? opt.color : "#475569", marginBottom: 4 }}>
+                      {opt.title}
+                    </div>
+                    <div style={{ fontSize: 11, color: "#475569", lineHeight: 1.5 }}>{opt.desc}</div>
+                  </button>
+                ))}
+              </div>
+
+              {/* Scope dropdown — only visible for general admin type */}
+              {form.scope !== "department" && (
+                <FF label="Scope">
+                  <Sel value={form.scope} onChange={e => upd("scope", e.target.value)}>
+                    {SCOPE_OPTIONS.filter(o => o.value !== "department").map(o => (
+                      <option key={o.value} value={o.value}>{o.label}</option>
+                    ))}
+                  </Sel>
+                </FF>
+              )}
+
+              <FF label="Assigned To (department / unit name)">
                 <Input value={form.scope_ref} onChange={e => upd("scope_ref", e.target.value)} placeholder="e.g. College of Computer Studies" />
               </FF>
               <FF label="Display Name" required error={errors.display_name}>
@@ -237,12 +296,20 @@ export default function AdminSubAccounts({ user }) {
                 <Input type="password" value={form.password} onChange={e => upd("password", e.target.value)} placeholder="Initial password" />
               </FF>
 
-              <div style={{ background: "rgba(245,158,11,.1)", border: "1px solid rgba(245,158,11,.25)", borderRadius: 8, padding: "10px 12px", fontSize: 12, color: "#fbbf24" }}>
-                ⚠️ Sub-admins can submit student/faculty account requests, which you'll approve here.
+              {/* Capability reminder */}
+              <div style={{
+                background: form.scope === "department" ? "rgba(99,102,241,.1)" : "rgba(16,185,129,.1)",
+                border: `1px solid ${form.scope === "department" ? "rgba(99,102,241,.25)" : "rgba(16,185,129,.25)"}`,
+                borderRadius: 8, padding: "10px 12px", fontSize: 12,
+                color: form.scope === "department" ? "#a5b4fc" : "#34d399",
+              }}>
+                {form.scope === "department"
+                  ? "🏛️ Department Admin: full access — can create student/teacher accounts, reset passwords, post announcements, and use chat."
+                  : "ℹ️ General Admin: limited access — can only post announcements and use chat."}
               </div>
 
               <Btn onClick={submit} disabled={busy} style={{ marginTop: 4 }}>
-                {busy ? "Creating…" : "✦ Create Sub-Admin"}
+                {busy ? "Creating…" : `✦ Create ${getType(form.scope)}`}
               </Btn>
             </div>
           )}
@@ -252,22 +319,29 @@ export default function AdminSubAccounts({ user }) {
       {/* ── Approvals tab ── */}
       {tab === "approvals" && (
         <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
-          {/* Grid */}
           <div style={{ flex: 1, padding: "14px 18px", display: "flex", flexDirection: "column", overflow: "hidden", background: "#0f172a", gap: 10 }}>
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexShrink: 0 }}>
               {["all", "pending", "approved", "rejected"].map(s => (
-                <button key={s} onClick={() => {}}
-                  style={{ padding: "4px 12px", borderRadius: 9999, border: "1px solid #334155", background: "transparent", color: "#64748b", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
-                  {s.charAt(0).toUpperCase()+s.slice(1)} {s === "pending" && pendingCount > 0 ? `(${pendingCount})` : ""}
+                <button key={s} onClick={() => setActiveFilter(s)}
+                  style={{
+                    padding: "4px 12px", borderRadius: 9999, fontFamily: "inherit", fontSize: 12, fontWeight: 700, cursor: "pointer", transition: "all .15s",
+                    border: activeFilter === s ? "1px solid #6366f1" : "1px solid #334155",
+                    background: activeFilter === s ? "#4f46e5" : "transparent",
+                    color: activeFilter === s ? "#fff" : "#64748b",
+                  }}>
+                  {s.charAt(0).toUpperCase()+s.slice(1)}
+                  {s === "pending" && pendingCount > 0 ? ` (${pendingCount})` : ""}
                 </button>
               ))}
+              <span style={{ fontSize: 12, color: "#475569", marginLeft: 4 }}>
+                {filteredApprovals.length} record{filteredApprovals.length !== 1 ? "s" : ""}
+              </span>
             </div>
             <div style={{ flex: 1, overflow: "hidden" }}>
-              <LMSGrid columns={approvalCols} rowData={approvals} onRowClick={setSelApproval} selectedId={selApproval?.id} height="100%" />
+              <LMSGrid columns={approvalCols} rowData={filteredApprovals} onRowClick={setSelApproval} selectedId={selApproval?.id} height="100%" />
             </div>
           </div>
 
-          {/* Approval detail */}
           {selApproval && (
             <div style={{ width: 300, borderLeft: "1px solid #334155", background: "#1e293b", padding: "18px 18px", overflowY: "auto", flexShrink: 0, display: "flex", flexDirection: "column", gap: 12 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -275,7 +349,6 @@ export default function AdminSubAccounts({ user }) {
                 <button onClick={() => setSelApproval(null)} style={{ background: "none", border: "none", color: "#475569", fontSize: 18, cursor: "pointer" }}>×</button>
               </div>
 
-              {/* Avatar */}
               <div style={{ textAlign: "center" }}>
                 <div style={{ width: 52, height: 52, borderRadius: "50%", background: selApproval.role === "student" ? "rgba(16,185,129,.15)" : "rgba(99,102,241,.15)", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 8px", fontSize: 20, fontWeight: 800, color: selApproval.role === "student" ? "#34d399" : "#a5b4fc" }}>
                   {selApproval.full_name?.charAt(0)}
@@ -284,17 +357,16 @@ export default function AdminSubAccounts({ user }) {
                 <Badge color={selApproval.role === "student" ? "success" : "purple"}>{selApproval.role}</Badge>
               </div>
 
-              {/* Fields */}
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {[
-                  ["Username",       selApproval.username],
-                  ["Email",          selApproval.email],
-                  ["Submitted By",   selApproval.submitter_name],
-                  ["Civil Status",   selApproval.civil_status],
-                  ["Birthdate",      selApproval.birthdate],
-                  ["Year Level",     selApproval.year_level],
-                  ["Semester",       selApproval.semester],
-                  ["Address",        selApproval.address],
+                  ["Username",     selApproval.username],
+                  ["Email",        selApproval.email],
+                  ["Submitted By", selApproval.submitter_name],
+                  ["Civil Status", selApproval.civil_status],
+                  ["Birthdate",    selApproval.birthdate],
+                  ["Year Level",   selApproval.year_level],
+                  ["Semester",     selApproval.semester],
+                  ["Address",      selApproval.address],
                 ].filter(([,v]) => v).map(([l, v]) => (
                   <div key={l}>
                     <div style={{ fontSize: 9, fontWeight: 700, color: "#475569", textTransform: "uppercase", letterSpacing: "0.07em" }}>{l}</div>
@@ -303,7 +375,6 @@ export default function AdminSubAccounts({ user }) {
                 ))}
               </div>
 
-              {/* Status */}
               <div style={{ background: "#0f172a", borderRadius: 8, padding: "10px 12px" }}>
                 <div style={{ fontSize: 11, color: "#475569", marginBottom: 4 }}>STATUS</div>
                 <Badge color={selApproval.status === "approved" ? "success" : selApproval.status === "rejected" ? "danger" : "warning"}>
@@ -311,15 +382,10 @@ export default function AdminSubAccounts({ user }) {
                 </Badge>
               </div>
 
-              {/* Action buttons — only for pending */}
               {selApproval.status === "pending" && (
                 <div style={{ display: "flex", gap: 10, marginTop: 4 }}>
-                  <Btn onClick={() => review(selApproval.id, "approved")} disabled={busy} style={{ flex: 1 }}>
-                    ✅ Approve
-                  </Btn>
-                  <Btn variant="danger" onClick={() => review(selApproval.id, "rejected")} disabled={busy} style={{ flex: 1 }}>
-                    ❌ Reject
-                  </Btn>
+                  <Btn onClick={() => review(selApproval.id, "approved")} disabled={busy} style={{ flex: 1 }}>✅ Approve</Btn>
+                  <Btn variant="danger" onClick={() => review(selApproval.id, "rejected")} disabled={busy} style={{ flex: 1 }}>❌ Reject</Btn>
                 </div>
               )}
             </div>

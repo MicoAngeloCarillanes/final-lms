@@ -1,3 +1,11 @@
+/**
+ * LoginPage.jsx
+ * FOLDER: src/LoginPage.jsx
+ *
+ * Changes:
+ *  - Added Sub-Admin demo quick-access button
+ *  - Updated promo panel feature list to mention sub-admin role
+ */
 import React, { useState } from "react";
 import { supabase } from "./supabaseClient";
 import { normalizeUser } from "./lib/normalizers";
@@ -50,23 +58,22 @@ export default function LoginPage({ onLogin }) {
   };
 
   const quick = [
-    { label: "Admin",   icon: "🛡", u: "admin",  p: "admin123", c: "#f59e0b" },
-    { label: "Student", icon: "🎓", u: "jdoe",   p: "pass123",  c: "#10b981" },
-    { label: "Teacher", icon: "📖", u: "pjones", p: "pass123",  c: "#6366f1" },
+    { label: "Admin",     icon: "🛡",  u: "admin",     p: "admin123", c: "#f59e0b" },
+    { label: "Sub-Admin", icon: "🔐",  u: "sub_admin", p: "admin123", c: "#fb923c" },
+    { label: "Teacher",   icon: "📖",  u: "pjones",    p: "pass123",  c: "#6366f1" },
+    { label: "Student",   icon: "🎓",  u: "jdoe",      p: "pass123",  c: "#10b981" },
   ];
 
   return (
     <div style={{ height: "100vh", display: "flex", overflow: "hidden", background: "#0f172a" }}>
       {/* Left — form */}
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", padding: "0 72px", position: "relative" }}>
-        <div style={{ position: "absolute", inset: 0, background: "radial-gradient(ellipse at 25% 55%, rgba(79,70,229,.14) 0%, transparent 65%)", pointerEvents: "none" }} />
-        <div style={{ maxWidth: 380, position: "relative" }}>
+      <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: "40px 32px" }}>
+        <div style={{ width: "100%", maxWidth: 380 }}>
           {/* Logo */}
-          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 48 }}>
-            <div style={{ width: 46, height: 46, background: "#4f46e5", borderRadius: 13, display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
-                <path d="M22 10v6M2 10l10-5 10 5-10 5z" />
-                <path d="M6 12v5c3 3 9 3 12 0v-5" />
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 36 }}>
+            <div style={{ width: 40, height: 40, background: "#4f46e5", borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
+                <path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/>
               </svg>
             </div>
             <div>
@@ -110,11 +117,11 @@ export default function LoginPage({ onLogin }) {
           {/* Demo quick-access */}
           <div style={{ marginTop: 28 }}>
             <div style={{ fontSize: 10, color: "#334155", textTransform: "uppercase", letterSpacing: "0.1em", textAlign: "center", marginBottom: 10 }}>Demo Quick Access</div>
-            <div style={{ display: "flex", gap: 8 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
               {quick.map(q => (
                 <button key={q.label}
                   onClick={() => { setU(q.u); setP(q.p); doLogin(q.u, q.p); }}
-                  style={{ flex: 1, padding: "8px 4px", borderRadius: 7, border: `1px solid ${q.c}44`, background: `${q.c}11`, color: q.c, fontSize: 12, fontWeight: 700, fontFamily: "inherit", cursor: "pointer" }}>
+                  style={{ padding: "8px 4px", borderRadius: 7, border: `1px solid ${q.c}44`, background: `${q.c}11`, color: q.c, fontSize: 12, fontWeight: 700, fontFamily: "inherit", cursor: "pointer" }}>
                   {q.icon} {q.label}
                 </button>
               ))}
@@ -132,10 +139,11 @@ export default function LoginPage({ onLogin }) {
           <h2 style={{ color: "#fff", fontSize: 26, fontWeight: 800, letterSpacing: "-0.02em", lineHeight: 1.3, marginBottom: 14 }}>Your complete academic ecosystem</h2>
           <p style={{ color: "#a5b4fc", fontSize: 13, lineHeight: 1.8, marginBottom: 28 }}>Manage courses, assignments, grades, and more — unified in one modern platform.</p>
           {[
-            ["🏫", "Multi-role: Admin, Teacher & Student"],
+            ["🏫", "Multi-role: Admin, Sub-Admin, Teacher & Student"],
             ["📚", "Full course & material management"],
             ["📊", "Real-time grading & grade reports"],
-            ["🔒", "Secure account management"],
+            ["🔒", "Secure account & password management"],
+            ["📢", "Announcements & department messaging"],
           ].map(([ic, txt]) => (
             <div key={txt} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
               <span style={{ fontSize: 16 }}>{ic}</span>

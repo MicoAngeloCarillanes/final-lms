@@ -1,8 +1,9 @@
 /**
  * AdminDashboard.jsx
- * FOLDER: src/admin/AdminDashboard.jsx  (replace existing)
+ * FOLDER: src/admin/AdminDashboard.jsx
  *
- * Changes: added Programs nav item and page
+ * Changes:
+ *  - Pass setUsers to AdminViewAccounts (needed for deactivate/reactivate)
  */
 import React, { useState } from "react";
 import Sidebar             from "../components/Sidebar";
@@ -37,7 +38,7 @@ export default function AdminDashboard({ user, onLogout, users, setUsers, course
     "sub-admins":       <AdminSubAccounts user={user} />,
     "create-accounts":  <AdminCreateAccounts users={users} setUsers={setUsers} />,
     "create-courses":   <AdminCreateCourses courses={courses} setCourses={setCourses} users={users} enrollments={enrollments} setEnrollments={setEnrollments} />,
-    "view-accounts":    <AdminViewAccounts users={users} />,
+    "view-accounts":    <AdminViewAccounts users={users} setUsers={setUsers} />,
     "departments":      <AdminDepartments />,
     "programs":         <AdminPrograms />,
     "chat":             <ChatPage user={user} />,

@@ -2,8 +2,11 @@
  * App.jsx — Root component
  * FOLDER: src/App.jsx  (replace existing)
  *
- * Changes from previous version:
- *  - Added SubAdminDashboard import and routing for role "sub_admin"
+ * Changes:
+ *  - After sub_admin login, fetches their scope from the sub_admins table
+ *    and attaches it as user.subAdminScope before rendering SubAdminDashboard.
+ *    scope === "department" → full access (accounts, password reset, announcements, chat)
+ *    any other scope       → restricted access (announcements + chat only)
  */
 import React, { useState, useEffect } from "react";
 import "./App.css";
@@ -194,8 +197,27 @@ export default function App() {
     });
   };
 
+  // ── Handle login — enrich sub_admin with scope from sub_admins table ─────────
+  const handleLogin = async (normalizedUser) => {
+    if (normalizedUser.role === "sub_admin") {
+      const { data: saRow } = await supabase
+        .from("sub_admins")
+        .select("scope, scope_ref")
+        .eq("user_id", normalizedUser._uuid)
+        .maybeSingle();
+
+      setCurrentUser({
+        ...normalizedUser,
+        subAdminScope:    saRow?.scope     || "other",
+        subAdminScopeRef: saRow?.scope_ref || "",
+      });
+    } else {
+      setCurrentUser(normalizedUser);
+    }
+  };
+
   // ── Render ───────────────────────────────────────────────────────────────────
-  if (!currentUser) return <LoginPage onLogin={setCurrentUser} />;
+  if (!currentUser) return <LoginPage onLogin={handleLogin} />;
 
   if (currentUser.role === "admin") {
     return (
@@ -208,7 +230,7 @@ export default function App() {
     );
   }
 
-  // ── Sub-admin (department / org admin) ──────────────────────────────────────
+  // ── Sub-admin: scope-aware dashboard ────────────────────────────────────────
   if (currentUser.role === "sub_admin") {
     return (
       <SubAdminDashboard

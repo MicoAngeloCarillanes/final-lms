@@ -1,7 +1,22 @@
 import React from "react";
 
 export default function Sidebar({ navItems, active, onNav, user, onLogout }) {
-  const roleColor = { admin: "#f59e0b", student: "#10b981", teacher: "#6366f1" }[user.role] || "#6366f1";
+  const roleColor =
+    {
+      admin:     "#f59e0b",
+      sub_admin: "#fb923c",
+      student:   "#10b981",
+      teacher:   "#6366f1",
+    }[user.role] || "#6366f1";
+
+  const roleLabel =
+    {
+      admin:     "Admin",
+      sub_admin: "Sub-Admin",
+      student:   "Student",
+      teacher:   "Teacher",
+    }[user.role] || user.role;
+
   return (
     <div style={{ width: 220, background: "#0f172a", height: "100vh", display: "flex", flexDirection: "column", flexShrink: 0, borderRight: "1px solid #1e293b" }}>
 
@@ -28,7 +43,9 @@ export default function Sidebar({ navItems, active, onNav, user, onLogout }) {
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ color: "#e2e8f0", fontSize: 12, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{user.fullName}</div>
-            <div style={{ fontSize: 10, color: roleColor, textTransform: "capitalize", fontWeight: 600 }}>{user.role} · {user.id}</div>
+            <div style={{ fontSize: 10, color: roleColor, textTransform: "capitalize", fontWeight: 600 }}>
+              {roleLabel} · {user.id}
+            </div>
           </div>
         </div>
       </div>
