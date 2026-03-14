@@ -54,26 +54,26 @@ export default function AdminCreateCourses({ courses, setCourses, users, enrollm
     // 2. Insert a schedule row (required so loadCourses() can join year_level/semester)
     let scheduleId = null;
     if (cf.schedule.trim()) {
-      const { data: newSched } = await supabase.from("schedules").insert({
+      const { data: newSched } = await supabase.from("schedules").upsert({
         course_id:      newCourse.course_id,
         schedule_label: cf.schedule.trim(),
         academic_year:  "2025-2026",
         semester:       cf.semester  || null,
         year_level:     cf.yearLevel || null,
-      }).select("schedule_id").single();
+      }, { onConflict: "course_id" }).select("schedule_id").single();
       scheduleId = newSched?.schedule_id || null;
     }
 
-    // 3. Assign teacher
+    // 3. Assign teacher — new course, so plain INSERT (no existing row to conflict)
     if (t?._uuid) {
-      await supabase.from("teacher_course_assignments").upsert({
+      await supabase.from("teacher_course_assignments").insert({
         teacher_id:    t._uuid,
         course_id:     newCourse.course_id,
         schedule_id:   scheduleId,
         is_primary:    true,
         academic_year: "2025-2026",
         semester:      cf.semester || null,
-      }, { onConflict: "teacher_id,course_id,academic_year,semester" });
+      });
     }
 
     setCourses(prev => [...prev, {
@@ -113,7 +113,7 @@ export default function AdminCreateCourses({ courses, setCourses, users, enrollm
       enrollment_status: "Enrolled",
       academic_year:     "2025-2026",
       semester:          "1st Semester",
-    }, { onConflict: "student_id,course_id,academic_year,semester" });
+    }, { onConflict: "student_id,course_id" });
 
     if (error) { showToast("Error: " + error.message); return; }
 
@@ -138,14 +138,19 @@ export default function AdminCreateCourses({ courses, setCourses, users, enrollm
     ]);
     if (uRes.error || cRes.error) { showToast("Could not find teacher or course."); return; }
 
-    // Upsert on (course_id, academic_year, semester) — one teacher per course per period
-    const { error } = await supabase.from("teacher_course_assignments").upsert({
+    // DELETE existing assignment then INSERT fresh — guarantees single row
+    // regardless of whether the DB unique constraint exists
+    await supabase.from("teacher_course_assignments")
+      .delete()
+      .eq("course_id", cRes.data.course_id);
+
+    const { error } = await supabase.from("teacher_course_assignments").insert({
       teacher_id:    uRes.data.user_id,
       course_id:     cRes.data.course_id,
       is_primary:    true,
       academic_year: "2025-2026",
       semester:      "1st Semester",
-    }, { onConflict: "course_id,academic_year,semester" });
+    });
 
     if (error) { showToast("Error: " + error.message); return; }
 

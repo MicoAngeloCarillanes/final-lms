@@ -51,27 +51,42 @@ export default function App() {
   // ── Load courses ─────────────────────────────────────────────────────────────
   useEffect(() => {
     async function loadCourses() {
-      const [courseRes, tcaRes, schedRes] = await Promise.all([
-        supabase.from("courses").select("*").eq("is_active", true),
-        supabase.from("teacher_course_assignments").select("teacher_id, course_id, schedule_id"),
-        supabase.from("schedules").select("schedule_id, course_id, schedule_label, year_level, semester"),
-      ]);
-      const rawCourses = courseRes.data || [];
-      const tcas       = tcaRes.data    || [];
-      const schedules  = schedRes.data  || [];
+      // Single query with embedded joins — avoids N+1 and duplicate row issues.
+      // schedules and teacher_course_assignments each have a UNIQUE(course_id)
+      // constraint so the [0] index is always the one valid row.
+      const { data: rawCourses, error } = await supabase
+        .from("courses")
+        .select(`
+          course_id, course_code, course_name, units, status, program_id,
+          schedules ( schedule_id, schedule_label, year_level, semester ),
+          teacher_course_assignments ( teacher_id, assigned_at )
+        `)
+        .eq("is_active", true)
+        .order("assigned_at", { referencedTable: "teacher_course_assignments", ascending: false });
 
-      const teacherIds = [...new Set(tcas.map(t => t.teacher_id))];
+      if (error || !rawCourses) return;
+
+      // Collect all teacher UUIDs for a single bulk lookup
+      const teacherIds = [...new Set(
+        rawCourses
+          .flatMap(c => c.teacher_course_assignments ?? [])
+          .map(t => t.teacher_id)
+          .filter(Boolean)
+      )];
+
       let teacherMap = {};
       if (teacherIds.length) {
         const { data: tUsers } = await supabase
-          .from("users").select("user_id, display_id, full_name").in("user_id", teacherIds);
+          .from("users")
+          .select("user_id, display_id, full_name")
+          .in("user_id", teacherIds);
         (tUsers || []).forEach(u => { teacherMap[u.user_id] = u; });
       }
 
       setCourses(rawCourses.map(c => {
-        const tca     = tcas.find(t => t.course_id === c.course_id);
-        const sch     = schedules.find(s => s.course_id === c.course_id);
-        const teacher = tca ? teacherMap[tca.teacher_id] : null;
+        const sch     = c.schedules?.[0]                        ?? null;
+        const tca     = c.teacher_course_assignments?.[0]       ?? null;
+        const teacher = tca ? teacherMap[tca.teacher_id]        ?? null : null;
         return {
           id:          c.course_code,
           code:        c.course_code,
@@ -83,8 +98,9 @@ export default function App() {
           yearLevel:   sch?.year_level      || "",
           semester:    sch?.semester        || "",
           status:      c.status             || "Ongoing",
+          programId:   c.program_id         ?? null,   // ← now included
           _uuid:       c.course_id,
-          _scheduleId: sch?.schedule_id     || null,
+          _scheduleId: sch?.schedule_id     ?? null,
         };
       }));
     }
