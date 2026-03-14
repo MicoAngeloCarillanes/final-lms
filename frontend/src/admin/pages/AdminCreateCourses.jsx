@@ -51,28 +51,26 @@ export default function AdminCreateCourses({ courses, setCourses, users, enrollm
       return;
     }
 
-    // 2. Insert a schedule row (required so loadCourses() can join year_level/semester)
+    // 2. Insert/update schedule using atomic RPC (handles enum casting)
     let scheduleId = null;
     if (cf.schedule.trim()) {
-      const { data: newSched } = await supabase.from("schedules").upsert({
-        course_id:      newCourse.course_id,
-        schedule_label: cf.schedule.trim(),
-        academic_year:  "2025-2026",
-        semester:       cf.semester  || null,
-        year_level:     cf.yearLevel || null,
-      }, { onConflict: "course_id" }).select("schedule_id").single();
-      scheduleId = newSched?.schedule_id || null;
+      const { data: sid, error: schErr } = await supabase.rpc("upsert_course_schedule", {
+        p_course_id:      newCourse.course_id,
+        p_schedule_label: cf.schedule.trim(),
+        p_academic_year:  "2025-2026",
+        p_semester:       cf.semester  || null,
+        p_year_level:     cf.yearLevel || null,
+      });
+      if (!schErr) scheduleId = sid;
     }
 
-    // 3. Assign teacher — new course, so plain INSERT (no existing row to conflict)
+    // 3. Assign teacher using atomic RPC
     if (t?._uuid) {
-      await supabase.from("teacher_course_assignments").insert({
-        teacher_id:    t._uuid,
-        course_id:     newCourse.course_id,
-        schedule_id:   scheduleId,
-        is_primary:    true,
-        academic_year: "2025-2026",
-        semester:      cf.semester || null,
+      await supabase.rpc("assign_teacher_to_course", {
+        p_teacher_id:    t._uuid,
+        p_course_id:     newCourse.course_id,
+        p_academic_year: "2025-2026",
+        p_semester:      cf.semester || null,
       });
     }
 
@@ -107,13 +105,12 @@ export default function AdminCreateCourses({ courses, setCourses, users, enrollm
     ]);
     if (uRes.error || cRes.error) { showToast("Could not find student or course."); return; }
 
-    const { error } = await supabase.from("student_course_assignments").upsert({
-      student_id:        uRes.data.user_id,
-      course_id:         cRes.data.course_id,
-      enrollment_status: "Enrolled",
-      academic_year:     "2025-2026",
-      semester:          "1st Semester",
-    }, { onConflict: "student_id,course_id" });
+    const { error } = await supabase.rpc("enroll_student", {
+      p_student_id:    uRes.data.user_id,
+      p_course_id:     cRes.data.course_id,
+      p_academic_year: "2025-2026",
+      p_semester:      "1st Semester",
+    });
 
     if (error) { showToast("Error: " + error.message); return; }
 
@@ -138,18 +135,12 @@ export default function AdminCreateCourses({ courses, setCourses, users, enrollm
     ]);
     if (uRes.error || cRes.error) { showToast("Could not find teacher or course."); return; }
 
-    // DELETE existing assignment then INSERT fresh — guarantees single row
-    // regardless of whether the DB unique constraint exists
-    await supabase.from("teacher_course_assignments")
-      .delete()
-      .eq("course_id", cRes.data.course_id);
-
-    const { error } = await supabase.from("teacher_course_assignments").insert({
-      teacher_id:    uRes.data.user_id,
-      course_id:     cRes.data.course_id,
-      is_primary:    true,
-      academic_year: "2025-2026",
-      semester:      "1st Semester",
+    // Use atomic RPC — INSERT ... ON CONFLICT DO UPDATE in one DB transaction
+    const { error } = await supabase.rpc("assign_teacher_to_course", {
+      p_teacher_id:    uRes.data.user_id,
+      p_course_id:     cRes.data.course_id,
+      p_academic_year: "2025-2026",
+      p_semester:      "1st Semester",
     });
 
     if (error) { showToast("Error: " + error.message); return; }
@@ -174,53 +165,20 @@ export default function AdminCreateCourses({ courses, setCourses, users, enrollm
   };
 
   // ── saveCourseEdit ────────────────────────────────────────────────────────────
-  // UPDATE the existing schedule row if _scheduleId exists; INSERT otherwise.
-  // (upsert always falls through to INSERT due to missing UNIQUE constraint on
-  //  course_id alone, which then hits the RLS USING-as-WITH-CHECK block.)
   const saveCourseEdit = async () => {
     if (!editModal) return;
     setEditSaving(true);
     const { course, schedule, yearLevel, semester } = editModal;
-    let error = null;
 
-    if (course._scheduleId) {
-      // UPDATE existing row
-      ({ error } = await supabase
-        .from("schedules")
-        .update({
-          schedule_label: schedule.trim() || null,
-          year_level:     yearLevel       || null,
-          semester:       semester        || null,
-        })
-        .eq("schedule_id", course._scheduleId));
-    } else {
-      // INSERT fresh row
-      const { data: newSch, error: insErr } = await supabase
-        .from("schedules")
-        .insert({
-          course_id:      course._uuid,
-          schedule_label: schedule.trim() || null,
-          academic_year:  "2025-2026",
-          year_level:     yearLevel       || null,
-          semester:       semester        || null,
-        })
-        .select("schedule_id")
-        .single();
-      error = insErr;
-      if (!insErr && newSch) {
-        // Link new schedule to the teacher assignment row
-        await supabase
-          .from("teacher_course_assignments")
-          .update({ schedule_id: newSch.schedule_id })
-          .eq("course_id",     course._uuid)
-          .eq("academic_year", "2025-2026")
-          .eq("semester",      "1st Semester");
-        // Stash so subsequent edits use the UPDATE path
-        setCourses(prev => prev.map(c =>
-          c._uuid === course._uuid ? { ...c, _scheduleId: newSch.schedule_id } : c
-        ));
-      }
-    }
+    // Use RPC for both create and update — handles USER-DEFINED enum casting
+    // and the UNIQUE(course_id) constraint on schedules atomically.
+    const { error } = await supabase.rpc("upsert_course_schedule", {
+      p_course_id:      course._uuid,
+      p_schedule_label: schedule.trim() || null,
+      p_academic_year:  "2025-2026",
+      p_semester:       semester  || null,
+      p_year_level:     yearLevel || null,
+    });
 
     if (error) { showToast("Error saving: " + error.message); setEditSaving(false); return; }
 

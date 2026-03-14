@@ -48,32 +48,38 @@ export default function App() {
     loadUsers();
   }, []);
 
-  // ── Load courses ─────────────────────────────────────────────────────────────
+  // ── Load courses ───────────────────────────────────────────────────────────────────────────────────
   useEffect(() => {
     async function loadCourses() {
-      // Single query with embedded joins — avoids N+1 and duplicate row issues.
-      // schedules and teacher_course_assignments each have a UNIQUE(course_id)
-      // constraint so the [0] index is always the one valid row.
+      // Fetch courses + schedules (no teacher join here)
       const { data: rawCourses, error } = await supabase
         .from("courses")
         .select(`
           course_id, course_code, course_name, units, status, program_id,
-          schedules ( schedule_id, schedule_label, year_level, semester ),
-          teacher_course_assignments ( teacher_id, assigned_at )
+          schedules ( schedule_id, schedule_label, year_level, semester )
         `)
-        .eq("is_active", true)
-        .order("assigned_at", { referencedTable: "teacher_course_assignments", ascending: false });
+        .eq("is_active", true);
 
       if (error || !rawCourses) return;
 
-      // Collect all teacher UUIDs for a single bulk lookup
-      const teacherIds = [...new Set(
-        rawCourses
-          .flatMap(c => c.teacher_course_assignments ?? [])
-          .map(t => t.teacher_id)
-          .filter(Boolean)
-      )];
+      // Fetch teacher assignments separately with explicit ORDER BY assigned_at DESC.
+      // Supabase embedded select does NOT sort nested arrays reliably — only a
+      // top-level query with .order() guarantees the latest assignment per course.
+      const courseIds = rawCourses.map(c => c.course_id);
+      const { data: tcaData } = await supabase
+        .from("teacher_course_assignments")
+        .select("course_id, teacher_id, assigned_at")
+        .in("course_id", courseIds)
+        .order("assigned_at", { ascending: false });
 
+      // Build map: course_id → latest teacher_id (first row after ORDER BY DESC)
+      const tcaMap = {};
+      (tcaData ?? []).forEach(row => {
+        if (!tcaMap[row.course_id]) tcaMap[row.course_id] = row.teacher_id;
+      });
+
+      // Bulk fetch all assigned teacher user records
+      const teacherIds = [...new Set(Object.values(tcaMap).filter(Boolean))];
       let teacherMap = {};
       if (teacherIds.length) {
         const { data: tUsers } = await supabase
@@ -84,30 +90,30 @@ export default function App() {
       }
 
       setCourses(rawCourses.map(c => {
-        const sch     = c.schedules?.[0]                        ?? null;
-        const tca     = c.teacher_course_assignments?.[0]       ?? null;
-        const teacher = tca ? teacherMap[tca.teacher_id]        ?? null : null;
+        const sch     = c.schedules?.[0] ?? null;
+        const tId     = tcaMap[c.course_id] ?? null;
+        const teacher = tId ? teacherMap[tId] ?? null : null;
         return {
           id:          c.course_code,
           code:        c.course_code,
           name:        c.course_name,
-          teacher:     teacher?.display_id  || "",
-          teacherName: teacher?.full_name   || "Unassigned",
-          schedule:    sch?.schedule_label  || "",
+          teacher:     teacher?.display_id || "",
+          teacherName: teacher?.full_name  || "Unassigned",
+          schedule:    sch?.schedule_label || "",
           units:       c.units,
-          yearLevel:   sch?.year_level      || "",
-          semester:    sch?.semester        || "",
-          status:      c.status             || "Ongoing",
-          programId:   c.program_id         ?? null,   // ← now included
+          yearLevel:   sch?.year_level     || "",
+          semester:    sch?.semester       || "",
+          status:      c.status            || "Ongoing",
+          programId:   c.program_id        ?? null,
           _uuid:       c.course_id,
-          _scheduleId: sch?.schedule_id     ?? null,
+          _scheduleId: sch?.schedule_id    ?? null,
         };
       }));
     }
     loadCourses();
   }, []);
 
-  // ── Load enrollments ─────────────────────────────────────────────────────────
+    // ── Load enrollments ─────────────────────────────────────────────────────────
   useEffect(() => {
     async function loadEnrollments() {
       const { data } = await supabase

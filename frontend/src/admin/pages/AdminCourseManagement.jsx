@@ -115,21 +115,39 @@ export default function AdminCourseManagement({ courses, setCourses, users, enro
   const loadCourses = useCallback(async (programId) => {
     setLoading(true);
     try {
-      const { data, error } = await supabase
+      // Fetch courses + schedules in one query
+      const { data: courseData, error: courseErr } = await supabase
         .from("courses")
         .select(`
           course_id, course_code, course_name, units, status, is_active, program_id,
-          schedules ( schedule_id, schedule_label, year_level, semester ),
-          teacher_course_assignments ( teacher_id, assigned_at )
+          schedules ( schedule_id, schedule_label, year_level, semester )
         `)
         .eq("program_id", programId)
-        .eq("is_active", true)
-        .order("assigned_at", { referencedTable: "teacher_course_assignments", ascending: false });
-      if (error) throw new Error(error.message);
+        .eq("is_active", true);
+      if (courseErr) throw new Error(courseErr.message);
 
-      const enriched = (data ?? []).map(c => {
+      const courseIds = (courseData ?? []).map(c => c.course_id);
+
+      // Fetch teacher assignments separately with explicit ORDER so latest wins.
+      // Supabase embedded select ordering does NOT sort nested arrays —
+      // only a top-level query guarantees the correct ORDER BY.
+      let tcaMap = {};
+      if (courseIds.length) {
+        const { data: tcaData } = await supabase
+          .from("teacher_course_assignments")
+          .select("course_id, teacher_id, assigned_at")
+          .in("course_id", courseIds)
+          .order("assigned_at", { ascending: false });
+
+        // Keep only the LATEST assignment per course (first row after ORDER BY DESC)
+        (tcaData ?? []).forEach(row => {
+          if (!tcaMap[row.course_id]) tcaMap[row.course_id] = row.teacher_id;
+        });
+      }
+
+      const enriched = (courseData ?? []).map(c => {
         const sch     = c.schedules?.[0];
-        const tId     = c.teacher_course_assignments?.[0]?.teacher_id;
+        const tId     = tcaMap[c.course_id] ?? null;
         const teacher = tId ? users.find(u => u._uuid === tId) : null;
         return {
           _uuid:       c.course_id,
@@ -143,7 +161,7 @@ export default function AdminCourseManagement({ courses, setCourses, users, enro
           yearLevel:   sch?.year_level      || "",
           semester:    sch?.semester        || "",
           _scheduleId: sch?.schedule_id     || null,
-          teacherId:   tId                  || null,
+          teacherId:   tId,
           teacherName: teacher?.fullName    || "Unassigned",
         };
       });
@@ -267,15 +285,15 @@ export default function AdminCourseManagement({ courses, setCourses, users, enro
           units:       parseInt(courseForm.units) || 3,
         }).eq("course_id", editingId);
 
-        // Update or insert schedule
+        // Update or insert schedule using RPC (handles USER-DEFINED enum casting)
         const editing = progCourses.find(c => c._uuid === editingId);
-        if (editing?._scheduleId) {
-          await supabase.from("schedules").update({
-            schedule_label: courseForm.schedule,
-            year_level:     courseForm.yearLevel,
-            semester:       courseForm.semester,
-          }).eq("schedule_id", editing._scheduleId);
-        }
+        await supabase.rpc("upsert_course_schedule", {
+          p_course_id:      editingId,
+          p_schedule_label: courseForm.schedule,
+          p_academic_year:  "2025-2026",
+          p_semester:       courseForm.semester  || null,
+          p_year_level:     courseForm.yearLevel || null,
+        });
 
         setProgCourses(prev => prev.map(c => c._uuid === editingId
           ? { ...c, code: courseForm.code.trim().toUpperCase(), name: courseForm.name.trim(), units: parseInt(courseForm.units) || 3, schedule: courseForm.schedule, yearLevel: courseForm.yearLevel, semester: courseForm.semester }
@@ -295,14 +313,14 @@ export default function AdminCourseManagement({ courses, setCourses, users, enro
 
         let scheduleId = null;
         if (courseForm.schedule.trim()) {
-          const { data: newSch } = await supabase.from("schedules").upsert({
-            course_id:      newCourse.course_id,
-            schedule_label: courseForm.schedule.trim(),
-            academic_year:  "2025-2026",
-            semester:       courseForm.semester  || null,
-            year_level:     courseForm.yearLevel || null,
-          }, { onConflict: "course_id" }).select("schedule_id").single();
-          scheduleId = newSch?.schedule_id || null;
+          const { data: sid, error: schErr } = await supabase.rpc("upsert_course_schedule", {
+            p_course_id:      newCourse.course_id,
+            p_schedule_label: courseForm.schedule.trim(),
+            p_academic_year:  "2025-2026",
+            p_semester:       courseForm.semester  || null,
+            p_year_level:     courseForm.yearLevel || null,
+          });
+          if (!schErr) scheduleId = sid;
         }
 
         const newRow = {
@@ -352,24 +370,15 @@ export default function AdminCourseManagement({ courses, setCourses, users, enro
     const teacher = teachers.find(t => t.id === teacherSel);
     if (!teacher) return;
     try {
-      // DELETE all existing assignments for this course first, then INSERT fresh.
-      // This is safer than upsert — works even without a DB unique constraint.
-      const { error: delErr } = await supabase
-        .from("teacher_course_assignments")
-        .delete()
-        .eq("course_id", selCourse._uuid);
-      if (delErr) throw new Error(delErr.message);
-
-      const { error: insErr } = await supabase
-        .from("teacher_course_assignments")
-        .insert({
-          teacher_id:    teacher._uuid,
-          course_id:     selCourse._uuid,
-          is_primary:    true,
-          academic_year: "2025-2026",
-          semester:      selCourse.semester || null,
-        });
-      if (insErr) throw new Error(insErr.message);
+      // Use atomic RPC — INSERT ... ON CONFLICT DO UPDATE in one DB transaction.
+      // This avoids the unique constraint violation that DELETE+INSERT causes.
+      const { error } = await supabase.rpc("assign_teacher_to_course", {
+        p_teacher_id:    teacher._uuid,
+        p_course_id:     selCourse._uuid,
+        p_academic_year: "2025-2026",
+        p_semester:      selCourse.semester || null,
+      });
+      if (error) throw new Error(error.message);
 
       const updated = { ...selCourse, teacherId: teacher._uuid, teacherName: teacher.fullName };
       setProgCourses(prev => prev.map(c => c._uuid === selCourse._uuid ? updated : c));
@@ -389,14 +398,21 @@ export default function AdminCourseManagement({ courses, setCourses, users, enro
       showToast("Student already enrolled.", "error"); return;
     }
     try {
-      await supabase.from("student_course_assignments").insert({
-        student_id:        student._uuid,
-        course_id:         selCourse._uuid,
-        enrollment_status: "Enrolled",
-        academic_year:     "2025-2026",
-        semester:          selCourse.semester || null,
+      // Atomic RPC — INSERT ... ON CONFLICT DO UPDATE
+      const { error } = await supabase.rpc("enroll_student", {
+        p_student_id:    student._uuid,
+        p_course_id:     selCourse._uuid,
+        p_academic_year: "2025-2026",
+        p_semester:      selCourse.semester || null,
       });
-      setEnrollments(prev => [...prev, { studentId: student.id, courseId: selCourse.id, grade: null, status: "Enrolled" }]);
+      if (error) throw new Error(error.message);
+
+      setEnrollments(prev => [...prev, {
+        studentId: student.id,
+        courseId:  selCourse.id,
+        grade:     null,
+        status:    "Enrolled",
+      }]);
       setEnroll({ studentId: "" });
       showToast(`${student.fullName} enrolled in ${selCourse.code}.`);
     } catch (e) { showToast(e.message, "error"); }
