@@ -1,7 +1,7 @@
 /**
  * api.js — LMS Backend client
  * NestJS (port 3000) → /api prefix
- * Real-time features (chat, announcements, tasks) → Supabase directly
+ * Real-time features → Supabase directly
  *
  * FOLDER: src/lib/api.js  (replace existing)
  */
@@ -19,31 +19,58 @@ async function request(method, path, body) {
   return data;
 }
 
-// ─── Department (NestJS) ─────────────────────────────────────────────────────
-export const departmentApi = {
-  create:    (p)     => request("POST",   "/department", p),
-  getOptions:()      => request("GET",    "/department/options"),
-  getList:   (p={})  => request("POST",   "/department/list", { page:1, size:20, sortBy:"departmentId", sortDir:"asc", ...p }),
-  getById:   (id)    => request("GET",    `/department/${id}`),
-  update:    (p)     => request("PUT",    "/department", p),
-  setActive: (id, a) => request("PATCH",  `/department/${id}/${a}`),
-  delete:    (id)    => request("DELETE", `/department/${id}`),
+// ─── User / Password (NestJS) ─────────────────────────────────────────────────
+export const userApi = {
+  /**
+   * Sub-admin resets a user's password to the school default (or a supplied one).
+   * POST /api/user/reset-password
+   */
+  resetPassword: (username, newPassword) =>
+    request("POST", "/user/reset-password", {
+      username,
+      ...(newPassword ? { newPassword } : {}),
+    }),
+
+  /**
+   * User changes their own password (verifies current password first).
+   * POST /api/user/change-password
+   */
+  changePassword: (username, currentPassword, newPassword) =>
+    request("POST", "/user/change-password", { username, currentPassword, newPassword }),
 };
 
-// ─── Announcements (Supabase) ────────────────────────────────────────────────
+// ─── Department (NestJS) ──────────────────────────────────────────────────────
+export const departmentApi = {
+  create:     (p)      => request("POST",   "/department", p),
+  getOptions: ()       => request("GET",    "/department/options"),
+  getList:    (p = {}) => request("POST",   "/department/list", { page: 1, size: 20, sortBy: "departmentId", sortDir: "asc", ...p }),
+  getById:    (id)     => request("GET",    `/department/${id}`),
+  update:     (p)      => request("PUT",    "/department", p),
+  setActive:  (id, a)  => request("PATCH",  `/department/${id}/${a}`),
+  delete:     (id)     => request("DELETE", `/department/${id}`),
+};
+
+// ─── Program (NestJS) ─────────────────────────────────────────────────────────
+export const programApi = {
+  create:     (p)      => request("POST",   "/program", p),
+  getOptions: ()       => request("GET",    "/program/options"),
+  getList:    (p = {}) => request("POST",   "/program/list", { page: 1, size: 20, ...p }),
+  getById:    (id)     => request("GET",    `/program/${id}`),
+  update:     (p)      => request("PUT",    "/program", p),
+  setActive:  (id, a)  => request("PATCH",  `/program/${id}/${a}`),
+  delete:     (id)     => request("DELETE", `/program/${id}`),
+};
+
+// ─── Announcements (Supabase) ─────────────────────────────────────────────────
 export const announcementApi = {
   async getAll() {
-    const { data, error } = await supabase
-      .from("announcements")
-      .select("*")
-      .order("pinned", { ascending: false })
-      .order("created_at", { ascending: false });
+    const { data, error } = await supabase.from("announcements").select("*")
+      .order("pinned", { ascending: false }).order("created_at", { ascending: false });
     if (error) throw new Error(error.message);
     return data ?? [];
   },
   async create({ authorId, authorName, authorRole, title, body, category = "General", pinned = false }) {
-    const { data, error } = await supabase
-      .from("announcements")
+    const { data, error } = await supabase.from("announcements")
       .insert({ author_id: authorId, author_name: authorName, author_role: authorRole, title, body, category, pinned })
       .select().single();
     if (error) throw new Error(error.message);
@@ -65,19 +92,16 @@ export const announcementApi = {
   },
 };
 
-// ─── Tasks (Supabase) ────────────────────────────────────────────────────────
+// ─── Tasks (Supabase) ─────────────────────────────────────────────────────────
 export const taskApi = {
   async getForUser(userUuid) {
-    const { data, error } = await supabase
-      .from("tasks").select("*")
-      .eq("user_id", userUuid)
-      .order("due_date", { ascending: true });
+    const { data, error } = await supabase.from("tasks").select("*")
+      .eq("user_id", userUuid).order("due_date", { ascending: true });
     if (error) throw new Error(error.message);
     return data ?? [];
   },
   async create({ userUuid, title, dueDate, type = "Task", courseId = null }) {
-    const { data, error } = await supabase
-      .from("tasks")
+    const { data, error } = await supabase.from("tasks")
       .insert({ user_id: userUuid, title, due_date: dueDate, type, course_id: courseId, is_done: false })
       .select().single();
     if (error) throw new Error(error.message);
@@ -102,17 +126,13 @@ export const chatApi = {
     return data ?? [];
   },
   async getMessages(channelId, limit = 80) {
-    const { data, error } = await supabase
-      .from("chat_messages").select("*")
-      .eq("channel_id", channelId)
-      .order("created_at", { ascending: true })
-      .limit(limit);
+    const { data, error } = await supabase.from("chat_messages").select("*")
+      .eq("channel_id", channelId).order("created_at", { ascending: true }).limit(limit);
     if (error) throw new Error(error.message);
     return data ?? [];
   },
   async sendMessage({ channelId, senderId, senderName, senderRole, body }) {
-    const { data, error } = await supabase
-      .from("chat_messages")
+    const { data, error } = await supabase.from("chat_messages")
       .insert({ channel_id: channelId, sender_id: senderId, sender_name: senderName, sender_role: senderRole, body })
       .select().single();
     if (error) throw new Error(error.message);
@@ -130,7 +150,7 @@ export const chatApi = {
   },
 };
 
-// ─── Sub-Admins (Supabase) ───────────────────────────────────────────────────
+// ─── Sub-Admins (Supabase) ────────────────────────────────────────────────────
 export const subAdminApi = {
   async getAll() {
     const { data, error } = await supabase.from("sub_admins").select("*").order("created_at", { ascending: false });
@@ -153,7 +173,7 @@ export const subAdminApi = {
   },
 };
 
-// ─── Account Approvals (Supabase) ────────────────────────────────────────────
+// ─── Account Approvals (Supabase) ─────────────────────────────────────────────
 export const approvalApi = {
   async getPending() {
     const { data, error } = await supabase.from("account_approvals").select("*")
@@ -162,7 +182,8 @@ export const approvalApi = {
     return data ?? [];
   },
   async getAll() {
-    const { data, error } = await supabase.from("account_approvals").select("*").order("created_at", { ascending: false });
+    const { data, error } = await supabase.from("account_approvals").select("*")
+      .order("created_at", { ascending: false });
     if (error) throw new Error(error.message);
     return data ?? [];
   },

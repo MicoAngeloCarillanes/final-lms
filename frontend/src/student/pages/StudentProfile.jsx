@@ -1,5 +1,15 @@
+/**
+ * StudentProfile.jsx
+ * FOLDER: src/student/pages/StudentProfile.jsx  (replace existing)
+ *
+ * Change from previous version:
+ *  - changePassword now calls NestJS POST /api/user/change-password
+ *    instead of calling Supabase RPC directly.
+ *  - This keeps password hashing on the backend (bcryptjs) consistently.
+ */
 import React, { useState } from "react";
 import { supabase } from "../../supabaseClient";
+import { userApi } from "../../lib/api";
 import { Badge, Btn, Input, Sel, FF, Card, Toast } from "../../components/ui";
 import TopBar from "../../components/TopBar";
 
@@ -32,24 +42,22 @@ export default function StudentProfile({ user, onUpdateUser }) {
     showToast("Profile updated!");
   };
 
+  // Uses NestJS POST /api/user/change-password
   const changePassword = async () => {
     setPwErr("");
-    if (!pwForm.current) { setPwErr("Enter your current password."); return; }
-    if (pwForm.next.length < 6) { setPwErr("New password must be at least 6 characters."); return; }
-    if (pwForm.next !== pwForm.confirm) { setPwErr("New passwords do not match."); return; }
+    if (!pwForm.current)              { setPwErr("Enter your current password."); return; }
+    if (pwForm.next.length < 6)       { setPwErr("New password must be at least 6 characters."); return; }
+    if (pwForm.next !== pwForm.confirm){ setPwErr("New passwords do not match."); return; }
+
     setPwSaving(true);
-    const { data: valid, error: verifyErr } = await supabase.rpc("verify_password", {
-      plain: pwForm.current, hash: user._passwordHash || "",
-    });
-    if (verifyErr || !valid) { setPwErr("Current password is incorrect."); setPwSaving(false); return; }
-    const { data: newHash, error: hashErr } = await supabase.rpc("hash_password", { plain: pwForm.next });
-    if (hashErr || !newHash) { setPwErr("Error hashing password."); setPwSaving(false); return; }
-    const { error: updErr } = await supabase.from("users")
-      .update({ password_hash: newHash }).eq("user_id", user._uuid);
-    if (updErr) { setPwErr("Error saving: " + updErr.message); setPwSaving(false); return; }
-    setPwForm({ current: "", next: "", confirm: "" });
+    try {
+      await userApi.changePassword(user.username, pwForm.current, pwForm.next);
+      setPwForm({ current: "", next: "", confirm: "" });
+      showToast("Password changed successfully!");
+    } catch (err) {
+      setPwErr(err.message || "Failed to change password.");
+    }
     setPwSaving(false);
-    showToast("Password changed successfully!");
   };
 
   const fieldVal = (f) => editing
@@ -78,7 +86,7 @@ export default function StudentProfile({ user, onUpdateUser }) {
             <div style={{ marginTop: 10, fontSize: 11, color: "#475569" }}>{user.id}</div>
           </Card>
           <Card>
-            <div style={{ fontSize: 11, fontWeight: 800, color: "#0f172a", marginBottom: 8 }}>Academic Info</div>
+            <div style={{ fontSize: 11, fontWeight: 800, color: "#94a3b8", marginBottom: 8 }}>Academic Info</div>
             {[["Year Level", user.yearLevel], ["Semester", user.semester]].map(([l, v]) => v && (
               <div key={l} style={{ marginBottom: 8 }}>
                 <div style={{ fontSize: 9, fontWeight: 700, color: "#475569", textTransform: "uppercase", letterSpacing: "0.07em" }}>{l}</div>
@@ -89,11 +97,10 @@ export default function StudentProfile({ user, onUpdateUser }) {
           {toast && <Toast msg={toast} />}
         </div>
 
-        {/* Main content */}
+        {/* Main */}
         <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 14 }}>
-          {/* Personal Info */}
           <Card>
-            <div style={{ fontWeight: 800, fontSize: 14, color: "#0f172a", marginBottom: 16 }}>Personal Information</div>
+            <div style={{ fontWeight: 800, fontSize: 14, color: "#e2e8f0", marginBottom: 16 }}>Personal Information</div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
               <FF label="Full Name">{fieldVal("fullName")}</FF>
               <FF label="Username">{fieldVal("username")}</FF>
@@ -101,7 +108,7 @@ export default function StudentProfile({ user, onUpdateUser }) {
               <FF label="Civil Status">
                 {editing
                   ? <Sel value={form.civilStatus || ""} onChange={e => setForm(p => ({ ...p, civilStatus: e.target.value }))}>
-                      {["Single", "Married", "Divorced", "Widowed"].map(s => <option key={s}>{s}</option>)}
+                      {["Single","Married","Divorced","Widowed"].map(s => <option key={s}>{s}</option>)}
                     </Sel>
                   : <div style={{ padding: "8px 10px", background: "#0f172a", borderRadius: 6, border: "1px solid #334155", fontSize: 13, color: "#cbd5e1", minHeight: 35 }}>{user.civilStatus || <span style={{ color: "#475569" }}>—</span>}</div>}
               </FF>
@@ -120,10 +127,12 @@ export default function StudentProfile({ user, onUpdateUser }) {
             </div>
           </Card>
 
-          {/* Change Password */}
+          {/* Change Password — now uses NestJS backend */}
           <Card>
-            <div style={{ fontWeight: 800, fontSize: 14, color: "#0f172a", marginBottom: 4 }}>🔒 Change Password</div>
-            <div style={{ fontSize: 12, color: "#64748b", marginBottom: 14 }}>Leave blank to keep your current password.</div>
+            <div style={{ fontWeight: 800, fontSize: 14, color: "#e2e8f0", marginBottom: 4 }}>🔒 Change Password</div>
+            <div style={{ fontSize: 12, color: "#64748b", marginBottom: 14 }}>
+              Your password is verified and updated securely on the server.
+            </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
               <FF label="Current Password">
                 <Input type="password" value={pwForm.current} onChange={e => setPwForm(p => ({ ...p, current: e.target.value }))} placeholder="Current password" />

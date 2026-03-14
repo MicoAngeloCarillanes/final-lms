@@ -1,12 +1,20 @@
+/**
+ * App.jsx — Root component
+ * FOLDER: src/App.jsx  (replace existing)
+ *
+ * Changes from previous version:
+ *  - Added SubAdminDashboard import and routing for role "sub_admin"
+ */
 import React, { useState, useEffect } from "react";
 import "./App.css";
 import { supabase } from "./supabaseClient";
 import { normalizeUser, normalizeMaterial, normalizeExam } from "./lib/normalizers";
 
-import LoginPage        from "./LoginPage";
-import AdminDashboard   from "./admin/AdminDashboard";
-import StudentDashboard from "./student/StudentDashboard";
-import TeacherDashboard from "./teacher/TeacherDashboard";
+import LoginPage         from "./LoginPage";
+import AdminDashboard    from "./admin/AdminDashboard";
+import SubAdminDashboard from "./sub-admin/SubAdminDashboard";
+import StudentDashboard  from "./student/StudentDashboard";
+import TeacherDashboard  from "./teacher/TeacherDashboard";
 
 export default function App() {
   const [currentUser,     setCurrentUser]     = useState(null);
@@ -15,7 +23,7 @@ export default function App() {
   const [enrollments,     setEnrollments]     = useState([]);
   const [examSubmissions, setExamSubmissions] = useState([]);
 
-  // ── Load users ──────────────────────────────────────────────────────────────
+  // ── Load users ───────────────────────────────────────────────────────────────
   useEffect(() => {
     async function loadUsers() {
       const [userRes, stuRes, tchRes] = await Promise.all([
@@ -37,7 +45,7 @@ export default function App() {
     loadUsers();
   }, []);
 
-  // ── Load courses (with teacher + schedule joins) ────────────────────────────
+  // ── Load courses ─────────────────────────────────────────────────────────────
   useEffect(() => {
     async function loadCourses() {
       const [courseRes, tcaRes, schedRes] = await Promise.all([
@@ -45,11 +53,10 @@ export default function App() {
         supabase.from("teacher_course_assignments").select("teacher_id, course_id, schedule_id"),
         supabase.from("schedules").select("schedule_id, course_id, schedule_label, year_level, semester"),
       ]);
-      const rawCourses = courseRes.data  || [];
-      const tcas       = tcaRes.data     || [];
-      const schedules  = schedRes.data   || [];
+      const rawCourses = courseRes.data || [];
+      const tcas       = tcaRes.data    || [];
+      const schedules  = schedRes.data  || [];
 
-      // Fetch teacher display names
       const teacherIds = [...new Set(tcas.map(t => t.teacher_id))];
       let teacherMap = {};
       if (teacherIds.length) {
@@ -60,7 +67,6 @@ export default function App() {
 
       setCourses(rawCourses.map(c => {
         const tca     = tcas.find(t => t.course_id === c.course_id);
-        // Look up schedule by course_id — most TCA rows have schedule_id = null
         const sch     = schedules.find(s => s.course_id === c.course_id);
         const teacher = tca ? teacherMap[tca.teacher_id] : null;
         return {
@@ -82,7 +88,7 @@ export default function App() {
     loadCourses();
   }, []);
 
-  // ── Load enrollments ────────────────────────────────────────────────────────
+  // ── Load enrollments ─────────────────────────────────────────────────────────
   useEffect(() => {
     async function loadEnrollments() {
       const { data } = await supabase
@@ -109,7 +115,7 @@ export default function App() {
     loadEnrollments();
   }, []);
 
-  // ── Load exam submissions ───────────────────────────────────────────────────
+  // ── Load exam submissions ────────────────────────────────────────────────────
   useEffect(() => {
     async function loadExamSubmissions() {
       const { data: subs } = await supabase
@@ -150,7 +156,7 @@ export default function App() {
     loadExamSubmissions();
   }, []);
 
-  // ── Handle exam submit (student → persists to DB + lifts to App state) ──────
+  // ── Exam submit handler ──────────────────────────────────────────────────────
   const handleSubmitExam = async (submission) => {
     const { data: savedSub, error: subErr } = await supabase
       .from("exam_submissions")
@@ -164,7 +170,6 @@ export default function App() {
       .single();
 
     const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
     if (!subErr && savedSub && isUUID.test(submission.examId) && submission.questionResults?.length) {
       const answerRows = submission.questionResults
         .filter(qr => isUUID.test(qr.questionId))
@@ -177,8 +182,7 @@ export default function App() {
         }));
       if (answerRows.length) {
         await supabase.from("exam_question_answers").upsert(
-          answerRows,
-          { onConflict: "exam_submission_id,question_id" }
+          answerRows, { onConflict: "exam_submission_id,question_id" }
         );
       }
     }
@@ -190,22 +194,26 @@ export default function App() {
     });
   };
 
-  // ── Render ──────────────────────────────────────────────────────────────────
-  if (!currentUser) {
-    return <LoginPage onLogin={setCurrentUser} />;
-  }
+  // ── Render ───────────────────────────────────────────────────────────────────
+  if (!currentUser) return <LoginPage onLogin={setCurrentUser} />;
 
   if (currentUser.role === "admin") {
     return (
       <AdminDashboard
-        user={currentUser}
-        onLogout={() => setCurrentUser(null)}
+        user={currentUser} onLogout={() => setCurrentUser(null)}
+        users={users} setUsers={setUsers}
+        courses={courses} setCourses={setCourses}
+        enrollments={enrollments} setEnrollments={setEnrollments}
+      />
+    );
+  }
+
+  // ── Sub-admin (department / org admin) ──────────────────────────────────────
+  if (currentUser.role === "sub_admin") {
+    return (
+      <SubAdminDashboard
+        user={currentUser} onLogout={() => setCurrentUser(null)}
         users={users}
-        setUsers={setUsers}
-        courses={courses}
-        setCourses={setCourses}
-        enrollments={enrollments}
-        setEnrollments={setEnrollments}
       />
     );
   }
@@ -213,8 +221,7 @@ export default function App() {
   if (currentUser.role === "student") {
     return (
       <StudentDashboard
-        user={currentUser}
-        onLogout={() => setCurrentUser(null)}
+        user={currentUser} onLogout={() => setCurrentUser(null)}
         onUpdateUser={setCurrentUser}
         courses={courses}
         examSubmissions={examSubmissions}
@@ -227,11 +234,9 @@ export default function App() {
   // teacher (default)
   return (
     <TeacherDashboard
-      user={currentUser}
-      onLogout={() => setCurrentUser(null)}
+      user={currentUser} onLogout={() => setCurrentUser(null)}
       onUpdateUser={setCurrentUser}
-      courses={courses}
-      setCourses={setCourses}
+      courses={courses} setCourses={setCourses}
       allUsers={users}
       examSubmissions={examSubmissions}
       enrollments={enrollments}
