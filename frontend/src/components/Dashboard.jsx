@@ -267,7 +267,8 @@ export default function Dashboard({ user, courses = [], enrollments = [] }) {
   const [selectedDate,  setSelectedDate]  = useState(null);
   const [loading,       setLoading]       = useState(true);
 
-  const canPost = ["admin", "teacher"].includes(user.role);
+  // Only admin and sub_admin can post to the main dashboard announcements
+  const canPost = ["admin", "sub_admin"].includes(user.role);
 
   useEffect(() => {
     let sub;
@@ -340,7 +341,7 @@ export default function Dashboard({ user, courses = [], enrollments = [] }) {
               ? <div style={{ color: "#475569", fontSize: 13, textAlign: "center", padding: 32 }}>No announcements yet.</div>
               : announcements.map(ann => (
                 <AnnouncementCard key={ann.id} ann={ann}
-                  canEdit={canPost && (user._uuid === ann.author_id || user.role === "admin")}
+                  canEdit={user._uuid === ann.author_id && ["admin","sub_admin"].includes(user.role) || user.role === "admin"}
                   onDelete={handleDelete} onPin={handlePin}
                 />
               ))

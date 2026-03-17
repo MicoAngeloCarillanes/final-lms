@@ -88,30 +88,42 @@ export default function StudentGrades({ user, courses, examSubmissions, enrollme
       const csEntry = classStandings.find(cs => cs.courseUuid === cuuid && cs.term === term) || null;
       const cs = csGradePct(csEntry);
 
-      // Exams (40%)
+      // Exams (40%) and Quizzes (30%) — separated by examType
       const termExams = allExams.filter(ex => ex.courseId === e.courseId && ex.term === term);
       const examSubs  = examSubmissions.filter(s => s.studentId === user.id && s.courseId === e.courseId);
-      const examScoresPct = termExams.map(ex => {
+
+      const examOnlyItems  = termExams.filter(ex => (ex.examType || "Exam") === "Exam");
+      const quizOnlyItems  = termExams.filter(ex => ex.examType === "Quiz");
+
+      const examScoresPct = examOnlyItems.map(ex => {
         const sub = examSubs.find(s => s.examId === ex.id);
         return sub ? Math.round((sub.score / sub.totalPoints) * 100) : null;
       }).filter(x => x != null);
+      const quizScoresPct = quizOnlyItems.map(ex => {
+        const sub = examSubs.find(s => s.examId === ex.id);
+        return sub ? Math.round((sub.score / sub.totalPoints) * 100) : null;
+      }).filter(x => x != null);
+
       const exam = examScoresPct.length > 0
-        ? Math.round(examScoresPct.reduce((a, b) => a + b, 0) / examScoresPct.length)
-        : null;
+        ? Math.round(examScoresPct.reduce((a, b) => a + b, 0) / examScoresPct.length) : null;
+      const quiz = quizScoresPct.length > 0
+        ? Math.round(quizScoresPct.reduce((a, b) => a + b, 0) / quizScoresPct.length) : null;
+
       const examDetail = termExams.map(ex => {
         const sub = examSubs.find(s => s.examId === ex.id);
         return {
-          title: ex.title,
-          score: sub?.score ?? null,
-          total: ex.totalPoints,
-          pct:   sub ? Math.round((sub.score / sub.totalPoints) * 100) : null,
+          title:    ex.title,
+          examType: ex.examType || "Exam",
+          score:    sub?.score ?? null,
+          total:    ex.totalPoints,
+          pct:      sub ? Math.round((sub.score / sub.totalPoints) * 100) : null,
         };
       });
 
       termData[term] = {
         cw, cwDetail, csEntry,
-        cs, exam, examDetail,
-        grade: computeTermGrade({ cw, cs, exam }),
+        cs, exam, quiz, examDetail,
+        grade: computeTermGrade({ cw, cs, exam, quiz }),
       };
     });
 

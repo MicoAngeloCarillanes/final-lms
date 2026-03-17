@@ -72,6 +72,7 @@ export default function TeacherAssignmentDetailView({ material, courseId, allUse
     showToast("Assignment updated!");
   };
 
+  const todayStr = new Date().toISOString().slice(0, 10);
   const m = MAT_META[material.type] || MAT_META[MaterialType.ASSIGNMENT];
 
   return (
@@ -114,7 +115,7 @@ export default function TeacherAssignmentDetailView({ material, courseId, allUse
             <div style={{ flex: 1, overflowY: "auto", padding: "14px 18px", display: "flex", flexDirection: "column", gap: 12 }}>
               <FF label="Title" required><Input value={editTitle} onChange={e => setEditTitle(e.target.value)} /></FF>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                <FF label="Due Date"><Input type="datetime-local" value={editDue} onChange={e => setEditDue(e.target.value)} /></FF>
+                <FF label="Due Date"><Input type="datetime-local" value={editDue} onChange={e => setEditDue(e.target.value)} min={todayStr} /></FF>
                 <FF label="Total Points"><Input type="number" value={editPoints} onChange={e => setEditPoints(e.target.value)} placeholder="100" /></FF>
               </div>
               <FF label="Instructions (Markdown)">

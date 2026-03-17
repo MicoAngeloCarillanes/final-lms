@@ -1,15 +1,8 @@
-/**
- * TeacherDashboard.jsx — REPLACE existing file
- * Adds: Dashboard home, Chat
- *
- * FOLDER: src/teacher/TeacherDashboard.jsx
- */
 import React, { useState } from "react";
 import Sidebar        from "../components/Sidebar";
 import Dashboard      from "../components/Dashboard";
 import TeacherCourses from "./pages/TeacherCourses";
 import TeacherProfile from "./pages/TeacherProfile";
-import TeacherGrades  from "./pages/TeacherGrades";
 import ChatPage       from "../components/ChatPage";
 
 export default function TeacherDashboard({ user, onLogout, onUpdateUser, courses, setCourses, allUsers, examSubmissions, enrollments }) {
@@ -17,19 +10,17 @@ export default function TeacherDashboard({ user, onLogout, onUpdateUser, courses
   const [page, setPage] = useState("dashboard");
 
   const nav = [
-    { id: "dashboard", label: "Dashboard",     icon: "🏠", badge: null },
-    { id: "courses",   label: "My Courses",     icon: "📚", badge: myCourses.length },
-    { id: "grades",    label: "Grade Students", icon: "📝", badge: null },
-    { id: "profile",   label: "My Profile",     icon: "👤", badge: null },
-    { id: "chat",      label: "Chat",           icon: "💬", badge: null },
+    { id: "dashboard", label: "Dashboard",  icon: "🏠", badge: null },
+    { id: "courses",   label: "My Courses", icon: "📚", badge: myCourses.length },
+    { id: "profile",   label: "My Profile", icon: "👤", badge: null },
+    { id: "chat",      label: "Chat",       icon: "💬", badge: null },
   ];
 
   const pages = {
-    dashboard: <Dashboard user={user} courses={courses} enrollments={enrollments} />,
-    courses:   <TeacherCourses user={user} courses={courses} setCourses={setCourses} allUsers={allUsers} enrollments={enrollments} />,
-    grades:    <TeacherGrades  user={user} courses={courses} allUsers={allUsers} examSubmissions={examSubmissions} enrollments={enrollments} />,
+    dashboard: <Dashboard      user={user} courses={courses} enrollments={enrollments} />,
+    courses:   <TeacherCourses user={user} courses={courses} setCourses={setCourses} allUsers={allUsers} enrollments={enrollments} examSubmissions={examSubmissions} />,
     profile:   <TeacherProfile user={user} onUpdateUser={onUpdateUser} />,
-    chat:      <ChatPage user={user} />,
+    chat:      <ChatPage       user={user} />,
   };
 
   return (

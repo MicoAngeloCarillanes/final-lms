@@ -109,3 +109,36 @@ input[type=number]::-webkit-inner-spin-button { opacity: 1; }
 /* ── Edit Textarea ─────────────────────────────────────────── */
 .edit-textarea { border: 1px solid #334155; border-radius: 6px; padding: 8px 10px; font-size: 13px; font-family: inherit; resize: vertical; outline: none; width: 100%; color: #e2e8f0; background: #1e293b; min-height: 80px; }
 .edit-textarea:focus { border-color: #6366f1; box-shadow: 0 0 0 3px rgba(99,102,241,.15); }
+
+/* ── QoL: Readability fixes ────────────────────────────────── */
+/* Fix any light-background panels that show dark text */
+.modal-box h1, .modal-box h2, .modal-box h3 { color: #f1f5f9 !important; }
+
+/* Ensure all select/input in dark panels are readable */
+select, input[type="text"], input[type="email"],
+input[type="number"], input[type="date"], input[type="time"],
+textarea {
+  color-scheme: dark;
+}
+
+/* Exam sidebar course detail had near-invisible text */
+.course-detail-text { color: #e2e8f0 !important; }
+
+/* Fix TeacherGrades detail modal header */
+.grades-modal-header { color: #f1f5f9 !important; }
+
+/* Fix login page or any card with white bg showing dark text on dark bg */
+.card-on-dark { background: #1e293b !important; color: #e2e8f0 !important; }
+
+/* Per-question timer ring style */
+.q-timer-urgent { animation: timerPulse 0.8s infinite; color: #f87171 !important; }
+
+/* Attendance status pills */
+.att-present { background: rgba(16,185,129,.2); color: #34d399; border: 1px solid rgba(16,185,129,.4); }
+.att-late    { background: rgba(245,158,11,.2); color: #fbbf24; border: 1px solid rgba(245,158,11,.4); }
+.att-absent  { background: rgba(239,68,68,.2);  color: #f87171; border: 1px solid rgba(239,68,68,.4); }
+.att-excused { background: rgba(100,116,139,.2);color: #94a3b8; border: 1px solid rgba(100,116,139,.4); }
+
+/* Exam type badge */
+.exam-type-exam { background: rgba(245,158,11,.2); color: #fbbf24; }
+.exam-type-quiz { background: rgba(236,72,153,.2); color: #f472b6; }

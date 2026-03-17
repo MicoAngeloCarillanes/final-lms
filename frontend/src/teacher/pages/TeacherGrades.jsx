@@ -86,16 +86,23 @@ export default function TeacherGrades({ user, courses, allUsers, examSubmissions
       ) || null;
       const cs = csGradePct(csEntry);
 
-      // Exams (40%)
+      // Exams (40%) and Quizzes (30%) — separated by examType
       const termExams = allExams.filter(ex => ex.courseId === courseId && ex.term === term);
       const subs      = examSubmissions.filter(s => s.studentId === studentDisplayId && s.courseId === courseId);
-      const examPcts  = termExams.map(ex => {
+
+      const examOnlyPcts  = termExams.filter(ex => (ex.examType || "Exam") === "Exam").map(ex => {
         const sub = subs.find(s => s.examId === ex.id);
         return sub ? Math.round((sub.score / sub.totalPoints) * 100) : null;
       }).filter(x => x != null);
-      const exam = examPcts.length > 0 ? Math.round(examPcts.reduce((a, b) => a + b, 0) / examPcts.length) : null;
+      const quizOnlyPcts = termExams.filter(ex => ex.examType === "Quiz").map(ex => {
+        const sub = subs.find(s => s.examId === ex.id);
+        return sub ? Math.round((sub.score / sub.totalPoints) * 100) : null;
+      }).filter(x => x != null);
 
-      result[term] = { cw, cs, csEntry, exam, grade: computeTermGrade({ cw, cs, exam }) };
+      const exam = examOnlyPcts.length  > 0 ? Math.round(examOnlyPcts.reduce((a, b) => a + b, 0)  / examOnlyPcts.length)  : null;
+      const quiz = quizOnlyPcts.length  > 0 ? Math.round(quizOnlyPcts.reduce((a, b) => a + b, 0) / quizOnlyPcts.length) : null;
+
+      result[term] = { cw, cs, csEntry, exam, quiz, grade: computeTermGrade({ cw, cs, exam, quiz }) };
     });
     return result;
   };
@@ -183,7 +190,7 @@ export default function TeacherGrades({ user, courses, allUsers, examSubmissions
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
       <TopBar title="Grade Students"
-        subtitle="Formula: Course Work 30% + Class Standing 30% + Exams 40%"
+        subtitle="Quiz 30% · Course Work 30% · Class Standing 30% · Exam 40%"
         actions={
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
             {toast && <span style={{ fontSize: 12, color: "#34d399", fontWeight: 700, background: "rgba(16,185,129,.15)", padding: "4px 10px", borderRadius: 6 }}>✓ {toast}</span>}
@@ -214,7 +221,7 @@ export default function TeacherGrades({ user, courses, allUsers, examSubmissions
         {/* Formula legend */}
         <div style={{ display: "flex", gap: 16, padding: "6px 10px", background: "#1e293b", borderRadius: 7, border: "1px solid #334155", flexShrink: 0, alignItems: "center" }}>
           <span style={{ fontSize: 10, fontWeight: 800, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.06em" }}>Formula</span>
-          {[["📚 Course Work", "30%", "#ede9fe", "#6366f1"], ["🏆 Class Standing", "30%", "#d1fae5", "#10b981"], ["📝 Exams", "40%", "#fef3c7", "#f59e0b"]].map(([lbl, pct, bg, col]) => (
+          {[["📚 Course Work", "30%", "#ede9fe", "#6366f1"], ["🏆 Class Standing", "30%", "#d1fae5", "#10b981"], ["📝 Exams", "40%", "#fef3c7", "#f59e0b"], ["✏ Quizzes", "30%", "#fce7f3", "#ec4899"]].map(([lbl, pct, bg, col]) => (
             <div key={lbl} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11 }}>
               <span style={{ background: bg, color: col, fontWeight: 800, padding: "2px 8px", borderRadius: 9999 }}>{pct}</span>
               <span style={{ color: "#64748b" }}>{lbl}</span>
@@ -261,8 +268,8 @@ export default function TeacherGrades({ user, courses, allUsers, examSubmissions
           <div className="modal-box" style={{ background: "#1e293b", borderRadius: 14, width: 680, maxHeight: "88vh", display: "flex", flexDirection: "column", overflow: "hidden", boxShadow: "0 24px 80px rgba(0,0,0,.25)" }}>
             <div style={{ padding: "16px 20px", borderBottom: "1px solid #334155", background: "#0f172a", display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexShrink: 0 }}>
               <div>
-                <div style={{ fontWeight: 900, fontSize: 15, color: "#0f172a" }}>{detailRow.studentName}</div>
-                <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>{detailRow.courseCode} · {detailRow.courseName}</div>
+                <div style={{ fontWeight: 900, fontSize: 15, color: "#f1f5f9" }}>{detailRow.studentName}</div>
+                <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 2 }}>{detailRow.courseCode} · {detailRow.courseName}</div>
               </div>
               <button onClick={() => setDetailRow(null)} style={{ border: "none", background: "none", cursor: "pointer", color: "#475569", fontSize: 22 }}
                 onMouseEnter={e => e.currentTarget.style.color = "#ef4444"}
@@ -303,13 +310,14 @@ export default function TeacherGrades({ user, courses, allUsers, examSubmissions
                         ? <span className={cellGradeClass(td.grade)} style={{ fontWeight: 900, padding: "3px 10px", borderRadius: 6 }}>{td.grade}%</span>
                         : <span style={{ fontSize: 11, color: "#475569" }}>Pending</span>}
                     </div>
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 0 }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 0 }}>
                       {[
                         { label: "📚 Course Work",    pct: td.cw,   weight: "30%", color: "#6366f1", bg: "#ede9fe" },
+                        { label: "✏ Quizzes",         pct: td.quiz, weight: "30%", color: "#ec4899", bg: "#fce7f3" },
                         { label: "🏆 Class Standing", pct: td.cs,   weight: "30%", color: "#10b981", bg: "#d1fae5" },
                         { label: "📝 Exams",          pct: td.exam, weight: "40%", color: "#f59e0b", bg: "#fef3c7" },
                       ].map(({ label, pct, weight, color, bg }, ci) => (
-                        <div key={label} style={{ padding: "10px 14px", borderRight: ci < 2 ? "1px solid #1e293b" : "none" }}>
+                        <div key={label} style={{ padding: "10px 14px", borderRight: ci < 3 ? "1px solid #1e293b" : "none" }}>
                           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
                             <span style={{ fontSize: 10, fontWeight: 700, color: "#64748b" }}>{label}</span>
                             <span style={{ fontSize: 9, fontWeight: 700, color, background: bg, padding: "1px 6px", borderRadius: 9999 }}>{weight}</span>

@@ -228,9 +228,9 @@ export const announcementApi = {
     if (error) throw new Error(error.message);
     return data ?? [];
   },
-  async create({ authorId, authorName, authorRole, title, body, category = "General", pinned = false }) {
+  async create({ authorId, authorName, authorRole, title, body, category = "General", pinned = false, courseId = null }) {
     const { data, error } = await supabase.from("announcements")
-      .insert({ author_id: authorId, author_name: authorName, author_role: authorRole, title, body, category, pinned })
+      .insert({ author_id: authorId, author_name: authorName, author_role: authorRole, title, body, category, pinned, course_id: courseId || null })
       .select().single();
     if (error) throw new Error(error.message);
     return data;

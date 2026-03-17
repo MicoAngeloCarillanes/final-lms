@@ -79,7 +79,7 @@ export default function ClassStandingModal({ student, course, existing, teacherU
         {/* Header */}
         <div style={{ padding: "16px 20px", borderBottom: "1px solid #334155", background: "#0f172a", display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
           <div>
-            <div style={{ fontWeight: 900, fontSize: 15, color: "#0f172a" }}>🏆 Class Standing Grades</div>
+            <div style={{ fontWeight: 900, fontSize: 15, color: "#f1f5f9" }}>🏆 Class Standing Grades</div>
             <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>
               {student.fullName} <span style={{ color: "#475569" }}>·</span> {course.code}: {course.name}
             </div>
@@ -113,7 +113,7 @@ export default function ClassStandingModal({ student, course, existing, teacherU
                 const cs = csFor(term);
                 const tm = TERM_META[term];
                 return (
-                  <tr key={term} style={{ borderBottom: "1px solid #1e293b", background: i % 2 === 0 ? "#fff" : "#0f172a" }}>
+                  <tr key={term} style={{ borderBottom: "1px solid #1e293b", background: i % 2 === 0 ? "#1e293b" : "#0f172a" }}>
                     <td style={{ padding: "10px 12px" }}>
                       <span style={{ fontSize: 11, fontWeight: 800, color: tm.color, background: tm.bg, padding: "3px 10px", borderRadius: 9999 }}>{term}</span>
                     </td>
@@ -123,7 +123,7 @@ export default function ClassStandingModal({ student, course, existing, teacherU
                           value={vals[term][field]}
                           onChange={e => upd(term, field, e.target.value)}
                           placeholder="—"
-                          style={{ width: 76, border: "1.5px solid #e2e8f0", borderRadius: 6, padding: "6px 8px", fontSize: 13, fontFamily: "inherit", textAlign: "center", outline: "none" }}
+                          style={{ width: 76, border: "1.5px solid #334155", background: "#0f172a", color: "#e2e8f0", borderRadius: 6, padding: "6px 8px", fontSize: 13, fontFamily: "inherit", textAlign: "center", outline: "none" }}
                           onFocus={e => e.target.style.borderColor = "#6366f1"}
                           onBlur={e  => e.target.style.borderColor = "#334155"}
                         />

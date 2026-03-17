@@ -1,35 +1,26 @@
-/**
- * StudentDashboard.jsx — REPLACE existing file
- * Adds: Dashboard home, Chat
- *
- * FOLDER: src/student/StudentDashboard.jsx
- */
 import React, { useState } from "react";
-import Sidebar      from "../components/Sidebar";
-import Dashboard    from "../components/Dashboard";
+import Sidebar       from "../components/Sidebar";
+import Dashboard     from "../components/Dashboard";
 import StudentCourses from "./pages/StudentCourses";
 import StudentProfile from "./pages/StudentProfile";
-import StudentGrades  from "./pages/StudentGrades";
-import ChatPage       from "../components/ChatPage";
+import ChatPage      from "../components/ChatPage";
 
 export default function StudentDashboard({ user, onLogout, onUpdateUser, courses, examSubmissions, onSubmitExam, enrollments }) {
   const myEnrollments = enrollments.filter(e => e.studentId === user.id);
   const [page, setPage] = useState("dashboard");
 
   const nav = [
-    { id: "dashboard", label: "Dashboard",    icon: "🏠", badge: null },
-    { id: "courses",   label: "My Courses",   icon: "📚", badge: myEnrollments.length },
-    { id: "grades",    label: "Grade Report", icon: "📊", badge: null },
-    { id: "profile",   label: "My Profile",   icon: "👤", badge: null },
-    { id: "chat",      label: "Chat",         icon: "💬", badge: null },
+    { id: "dashboard", label: "Dashboard",  icon: "🏠", badge: null },
+    { id: "courses",   label: "My Courses", icon: "📚", badge: myEnrollments.length },
+    { id: "profile",   label: "My Profile", icon: "👤", badge: null },
+    { id: "chat",      label: "Chat",       icon: "💬", badge: null },
   ];
 
   const pages = {
-    dashboard: <Dashboard user={user} courses={courses} enrollments={enrollments} />,
+    dashboard: <Dashboard      user={user} courses={courses} enrollments={enrollments} />,
     courses:   <StudentCourses user={user} courses={courses} onSubmitExam={onSubmitExam} examSubmissions={examSubmissions} enrollments={enrollments} />,
-    grades:    <StudentGrades  user={user} courses={courses} examSubmissions={examSubmissions} enrollments={enrollments} />,
     profile:   <StudentProfile user={user} onUpdateUser={onUpdateUser} />,
-    chat:      <ChatPage user={user} />,
+    chat:      <ChatPage       user={user} />,
   };
 
   return (
