@@ -185,11 +185,17 @@ function TaskPanel({ user, selectedDate, tasks, setTasks }) {
 // ─── AnnouncementCard ─────────────────────────────────────────────────────────
 function AnnouncementCard({ ann, canEdit, onDelete, onPin }) {
   const meta = CAT_META[ann.category] || CAT_META.General;
+  const audienceLabel = ann.category === "Staff" ? "🛡️ Staff only" : ann.category === "Students" ? "🎓 Students only" : null;
   return (
     <div style={{ background: "#1e293b", border: `1px solid ${ann.pinned ? "#4f46e5" : "#334155"}`, borderRadius: 12, padding: "14px 16px", position: "relative" }}>
       {ann.pinned && <div style={{ position: "absolute", top: 10, right: 14, fontSize: 11, color: "#a5b4fc" }}>📌 Pinned</div>}
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
         <span style={{ background: meta.bg, color: meta.color, fontSize: 10, fontWeight: 800, padding: "2px 8px", borderRadius: 9999 }}>{ann.category}</span>
+          {audienceLabel && (
+            <span style={{ background: "rgba(100,116,139,.15)", color: "#94a3b8", fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 9999, marginLeft: 4 }}>
+              {audienceLabel}
+            </span>
+          )}
         <span style={{ fontSize: 11, color: "#475569" }}>{ann.author_name} · {timeAgo(ann.created_at)}</span>
       </div>
       <div style={{ fontWeight: 800, fontSize: 15, color: "#f1f5f9", marginBottom: 6 }}>{ann.title}</div>
@@ -205,6 +211,16 @@ function AnnouncementCard({ ann, canEdit, onDelete, onPin }) {
     </div>
   );
 }
+
+// ─── Audience options (category → who sees it on the dashboard) ──────────────
+const AUDIENCE_OPTS = [
+  { value: "General",  label: "🌐 Everyone",     hint: "Visible to all roles"           },
+  { value: "Academic", label: "📚 Academic",      hint: "Visible to all roles"           },
+  { value: "Events",   label: "📅 Events",        hint: "Visible to all roles"           },
+  { value: "Urgent",   label: "🚨 Urgent",        hint: "Visible to all roles"           },
+  { value: "Staff",    label: "🛡️ Staff only",    hint: "Admin, Sub-Admin, Teachers"    },
+  { value: "Students", label: "🎓 Students only", hint: "Admin, Sub-Admin, Students"    },
+];
 
 // ─── PostForm ─────────────────────────────────────────────────────────────────
 function PostForm({ user, onPost }) {
@@ -228,6 +244,8 @@ function PostForm({ user, onPost }) {
     setBusy(false);
   };
 
+  const selAudience = AUDIENCE_OPTS.find(a => a.value === form.category) || AUDIENCE_OPTS[0];
+
   if (!open) return (
     <button onClick={() => setOpen(true)}
       style={{ width: "100%", background: "#1e293b", border: "1px dashed #334155", borderRadius: 12, padding: "12px 16px", cursor: "pointer", color: "#475569", fontSize: 13, fontFamily: "inherit", textAlign: "left", transition: "border-color .15s" }}
@@ -242,16 +260,33 @@ function PostForm({ user, onPost }) {
       <Input value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} placeholder="Announcement title…" style={{ marginBottom: 8 }} />
       <textarea value={form.body} onChange={e => setForm(f => ({ ...f, body: e.target.value }))}
         placeholder="Write your announcement…" rows={4}
-        style={{ width: "100%", background: "#0f172a", border: "1px solid #334155", borderRadius: 6, padding: "8px 10px", fontSize: 13, fontFamily: "inherit", color: "#e2e8f0", resize: "vertical", outline: "none", marginBottom: 8 }} />
-      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-        <select value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))}
-          style={{ border: "1px solid #334155", borderRadius: 6, padding: "6px 8px", fontSize: 12, fontFamily: "inherit", color: "#e2e8f0", background: "#0f172a", cursor: "pointer" }}>
-          {["General","Academic","Events","Urgent"].map(c => <option key={c}>{c}</option>)}
-        </select>
+        style={{ width: "100%", background: "#0f172a", border: "1px solid #334155", borderRadius: 6, padding: "8px 10px", fontSize: 13, fontFamily: "inherit", color: "#e2e8f0", resize: "vertical", outline: "none", marginBottom: 10, boxSizing: "border-box" }} />
+
+      {/* Audience selector */}
+      <div style={{ marginBottom: 10 }}>
+        <div style={{ fontSize: 10, fontWeight: 800, color: "#475569", textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 6 }}>Who sees this?</div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          {AUDIENCE_OPTS.map(opt => (
+            <button key={opt.value} onClick={() => setForm(f => ({ ...f, category: opt.value }))}
+              title={opt.hint}
+              style={{
+                padding: "5px 11px", borderRadius: 6, fontFamily: "inherit", fontSize: 12, fontWeight: 700, cursor: "pointer",
+                background: form.category === opt.value ? "rgba(99,102,241,.2)" : "transparent",
+                color:      form.category === opt.value ? "#a5b4fc" : "#64748b",
+                border:     form.category === opt.value ? "1px solid rgba(99,102,241,.4)" : "1px solid #334155",
+              }}>
+              {opt.label}
+            </button>
+          ))}
+        </div>
+        <div style={{ fontSize: 11, color: "#475569", marginTop: 5, fontStyle: "italic" }}>{selAudience.hint}</div>
+      </div>
+
+      <div style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "space-between" }}>
         <label style={{ fontSize: 12, color: "#94a3b8", display: "flex", alignItems: "center", gap: 4, cursor: "pointer" }}>
-          <input type="checkbox" checked={form.pinned} onChange={e => setForm(f => ({ ...f, pinned: e.target.checked }))} /> Pin
+          <input type="checkbox" checked={form.pinned} onChange={e => setForm(f => ({ ...f, pinned: e.target.checked }))} /> 📌 Pin
         </label>
-        <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+        <div style={{ display: "flex", gap: 8 }}>
           <Btn variant="secondary" size="sm" onClick={() => setOpen(false)}>Cancel</Btn>
           <Btn size="sm" onClick={submit} disabled={busy}>{busy ? "Posting…" : "Post"}</Btn>
         </div>
@@ -276,7 +311,7 @@ export default function Dashboard({ user, courses = [], enrollments = [] }) {
       setLoading(true);
       try {
         const [anns, tks] = await Promise.all([
-          announcementApi.getAll(),
+          announcementApi.getDashboard(user.role, user._uuid),
           user._uuid ? taskApi.getForUser(user._uuid) : [],
         ]);
         setAnnouncements(anns);
@@ -284,15 +319,17 @@ export default function Dashboard({ user, courses = [], enrollments = [] }) {
       } catch (e) { console.error(e); }
       setLoading(false);
 
-      // Realtime announcements
+      // Realtime announcements (global/dashboard only)
       sub = announcementApi.subscribe(() => {
-        announcementApi.getAll().then(setAnnouncements).catch(console.error);
+        announcementApi.getDashboard(user.role, user._uuid).then(setAnnouncements).catch(console.error);
       });
     })();
     return () => { sub?.unsubscribe?.(); };
   }, [user._uuid]);
 
   const handlePost    = (ann) => setAnnouncements(prev => [ann, ...prev]);
+  // Defensive: strip any course-scoped announcements that shouldn't be here
+  const dashboardAnns = announcements.filter(a => !a.course_id);
   const handleDelete  = async (id) => { await announcementApi.delete(id); setAnnouncements(prev => prev.filter(a => a.id !== id)); };
   const handlePin     = async (ann) => { const u = await announcementApi.update(ann.id, { pinned: !ann.pinned }); setAnnouncements(prev => prev.map(a => a.id === u.id ? u : a)); };
   const handleDayClick = (key) => setSelectedDate(prev => prev === key ? null : key);
@@ -337,9 +374,9 @@ export default function Dashboard({ user, courses = [], enrollments = [] }) {
             {canPost && <PostForm user={user} onPost={handlePost} />}
             {loading
               ? <div style={{ color: "#475569", fontSize: 13, textAlign: "center", padding: 32 }}>Loading…</div>
-              : announcements.length === 0
+              : dashboardAnns.length === 0
               ? <div style={{ color: "#475569", fontSize: 13, textAlign: "center", padding: 32 }}>No announcements yet.</div>
-              : announcements.map(ann => (
+              : dashboardAnns.map(ann => (
                 <AnnouncementCard key={ann.id} ann={ann}
                   canEdit={user._uuid === ann.author_id && ["admin","sub_admin"].includes(user.role) || user.role === "admin"}
                   onDelete={handleDelete} onPin={handlePin}

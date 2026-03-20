@@ -9,6 +9,7 @@
  */
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { supabase } from "../../supabaseClient";
+import { announcementApi } from "../../lib/api";
 import {
   MAT_META, MaterialType, isSubmittable,
   EXAM_TERMS, TERM_META, QT_META, termFromDate,
@@ -69,47 +70,42 @@ function StreamTab({ course, user }) {
   useEffect(() => {
     if (!course._uuid) return;
     setLoading(true);
-    supabase.from("announcements").select("*")
-      .eq("course_id", course._uuid)
-      .order("pinned", { ascending: false })
-      .order("created_at", { ascending: false })
-      .then(({ data }) => { setPosts(data || []); setLoading(false); });
+    announcementApi.getCourse(course._uuid)
+      .then(data => { setPosts(data); setLoading(false); })
+      .catch(() => setLoading(false));
 
-    const sub = supabase.channel(`course-ann-${course._uuid}`)
-      .on("postgres_changes", { event: "*", schema: "public", table: "announcements",
-        filter: `course_id=eq.${course._uuid}` }, () => {
-        supabase.from("announcements").select("*").eq("course_id", course._uuid)
-          .order("pinned",{ ascending:false }).order("created_at",{ ascending:false })
-          .then(({ data }) => setPosts(data || []));
-      }).subscribe();
+    const sub = announcementApi.subscribeCourse(course._uuid, () => {
+      announcementApi.getCourse(course._uuid).then(setPosts).catch(console.error);
+    });
     return () => sub.unsubscribe();
   }, [course._uuid]);
 
   const post = async () => {
     if (!body.trim()) return;
     setPosting(true);
-    const payload = {
-      author_id:   user._uuid,
-      author_name: user.fullName,
-      author_role: "teacher",
-      title:       title.trim() || `${course.code} — ${new Date().toLocaleDateString("en-US",{month:"short",day:"numeric"})}`,
-      body:        body.trim(),
-      category:    "Academic",
-      pinned:      false,
-      course_id:   course._uuid,
-    };
-    const { data, error } = await supabase.from("announcements").insert(payload).select().single();
-    if (!error && data) setPosts(prev => [data, ...prev]);
+    try {
+      const data = await announcementApi.create({
+        authorId:   user._uuid,
+        authorName: user.fullName,
+        authorRole: "teacher",
+        title:      title.trim() || `${course.code} — ${new Date().toLocaleDateString("en-US",{month:"short",day:"numeric"})}`,
+        body:       body.trim(),
+        category:   "Academic",
+        pinned:     false,
+        courseId:   course._uuid,
+      });
+      setPosts(prev => [data, ...prev]);
+    } catch (e) { console.error(e); }
     setTitle(""); setBody(""); setOpen(false); setPosting(false);
   };
 
   const del = async (id) => {
-    await supabase.from("announcements").delete().eq("id", id);
+    await announcementApi.delete(id);
     setPosts(prev => prev.filter(p => p.id !== id));
   };
 
   const pin = async (ann) => {
-    const { data } = await supabase.from("announcements").update({ pinned: !ann.pinned }).eq("id", ann.id).select().single();
+    const data = await announcementApi.update(ann.id, { pinned: !ann.pinned });
     if (data) setPosts(prev => prev.map(p => p.id === data.id ? data : p));
   };
 

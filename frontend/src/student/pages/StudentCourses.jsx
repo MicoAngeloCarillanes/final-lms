@@ -8,6 +8,7 @@
  */
 import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "../../supabaseClient";
+import { announcementApi } from "../../lib/api";
 import {
   MAT_META, MaterialType, isSubmittable,
   EXAM_TERMS, TERM_META, termFromDate,
@@ -58,19 +59,13 @@ function StreamTab({ course, upcoming }) {
   useEffect(() => {
     if (!course._uuid) return;
     setLoading(true);
-    supabase.from("announcements").select("*")
-      .eq("course_id", course._uuid)
-      .order("pinned", { ascending: false })
-      .order("created_at", { ascending: false })
-      .then(({ data }) => { setPosts(data || []); setLoading(false); });
+    announcementApi.getCourse(course._uuid)
+      .then(data => { setPosts(data); setLoading(false); })
+      .catch(() => setLoading(false));
 
-    const sub = supabase.channel(`s-course-ann-${course._uuid}`)
-      .on("postgres_changes", { event: "*", schema: "public", table: "announcements",
-        filter: `course_id=eq.${course._uuid}` }, () => {
-        supabase.from("announcements").select("*").eq("course_id", course._uuid)
-          .order("pinned",{ascending:false}).order("created_at",{ascending:false})
-          .then(({ data }) => setPosts(data || []));
-      }).subscribe();
+    const sub = announcementApi.subscribeCourse(course._uuid, () => {
+      announcementApi.getCourse(course._uuid).then(setPosts).catch(console.error);
+    });
     return () => sub.unsubscribe();
   }, [course._uuid]);
 

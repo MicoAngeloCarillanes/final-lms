@@ -10,7 +10,16 @@ import { announcementApi } from "../../lib/api";
 import { Badge, Btn, Input, Sel, FF, Toast } from "../../components/ui";
 import TopBar from "../../components/TopBar";
 
-const CATEGORIES = ["General", "Academic", "Events", "Urgent", "Maintenance"];
+const CATEGORIES = ["General", "Academic", "Events", "Urgent", "Staff", "Students"];
+
+const AUDIENCE_HINTS = {
+  General:  "🌐 Visible to all roles",
+  Academic: "📚 Visible to all roles",
+  Events:   "📅 Visible to all roles",
+  Urgent:   "🚨 Visible to all roles",
+  Staff:    "🛡️ Admin, Sub-Admin, Teachers only",
+  Students: "🎓 Admin, Sub-Admin, Students only",
+};
 
 const emptyForm = { title: "", body: "", category: "General", pinned: false };
 
@@ -199,10 +208,15 @@ export default function SubAdminAnnouncements({ user }) {
             </FF>
 
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-              <FF label="Category">
+              <FF label="Audience / Category">
                 <Sel value={form.category} onChange={e => upd("category", e.target.value)}>
                   {CATEGORIES.map(c => <option key={c}>{c}</option>)}
                 </Sel>
+                {AUDIENCE_HINTS[form.category] && (
+                  <div style={{ fontSize: 11, color: "#64748b", marginTop: 4, fontStyle: "italic" }}>
+                    {AUDIENCE_HINTS[form.category]}
+                  </div>
+                )}
               </FF>
               <FF label="Pin to top">
                 <div style={{ display: "flex", alignItems: "center", height: 38 }}>
