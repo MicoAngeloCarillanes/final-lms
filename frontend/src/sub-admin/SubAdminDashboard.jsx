@@ -349,7 +349,7 @@ export default function SubAdminDashboard({ user, onLogout, users }) {
     "account-requests": <SubAdminAccountRequests user={user}/>,
     "password-reset":   <SubAdminPasswordReset   user={user} users={users}/>,
     "courses":          <SubAdminCourseManagement user={user} users={users}/>,
-    "chat":             <ChatPage user={user}/>,
+    "chat":             <ChatPage user={user} courses={[]} enrollments={[]} />,
   };
 
   return (

@@ -28,7 +28,7 @@ export default function GradingModal({ submission, onSave, onClose }) {
         {/* Header */}
         <div style={{ padding: "16px 20px", borderBottom: "1px solid #334155", display: "flex", alignItems: "flex-start", justifyContent: "space-between", background: "#0f172a", flexShrink: 0 }}>
           <div>
-            <div style={{ fontWeight: 900, fontSize: 15, color: "#0f172a", letterSpacing: "-0.02em" }}>Review Submission</div>
+            <div style={{ fontWeight: 900, fontSize: 15, color: "#f1f5f9", letterSpacing: "-0.02em" }}>Review Submission</div>
             <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>{submission.studentName}</div>
           </div>
           <button onClick={onClose} style={{ border: "none", background: "none", cursor: "pointer", color: "#475569", fontSize: 22, lineHeight: 1, padding: 2 }}
@@ -80,7 +80,7 @@ export default function GradingModal({ submission, onSave, onClose }) {
 
           {/* Grading section */}
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            <div style={{ fontWeight: 800, fontSize: 13, color: "#0f172a" }}>Grade Entry</div>
+            <div style={{ fontWeight: 800, fontSize: 13, color: "#f1f5f9" }}>Grade Entry</div>
 
             <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
               <div style={{ flex: 1 }}>

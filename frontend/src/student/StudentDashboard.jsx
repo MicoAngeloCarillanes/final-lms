@@ -20,7 +20,7 @@ export default function StudentDashboard({ user, onLogout, onUpdateUser, courses
     dashboard: <Dashboard      user={user} courses={courses} enrollments={enrollments} />,
     courses:   <StudentCourses user={user} courses={courses} onSubmitExam={onSubmitExam} examSubmissions={examSubmissions} enrollments={enrollments} />,
     profile:   <StudentProfile user={user} onUpdateUser={onUpdateUser} />,
-    chat:      <ChatPage       user={user} />,
+    chat:      <ChatPage       user={user} courses={courses} enrollments={enrollments} />,
   };
 
   return (

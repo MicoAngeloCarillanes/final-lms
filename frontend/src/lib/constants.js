@@ -77,3 +77,44 @@ export const ALLOWED_MIME_TYPES = [
 // Quizzes (Lab/Assignment) = 30%, Class Standing = 30%, Exams = 40%
 // Within Exams: Quiz-type exams = 30% weight, Exam-type = 40% weight
 export const GRADE_WEIGHTS = { quiz: 0.30, classStanding: 0.30, exam: 0.40 };
+
+// ─── Dynamic Term Resolution ──────────────────────────────────────────────────
+// Replaces the hardcoded termFromDate(). Fetches the current term from
+// the active school year config in Supabase (term_periods table).
+// Falls back to hardcoded logic if no active SY is configured.
+
+let _cachedTerm = null;
+let _cacheExpiry = 0;
+
+export async function getCurrentTermDynamic(supabase) {
+  const now = Date.now();
+  if (_cachedTerm && now < _cacheExpiry) return _cachedTerm;
+
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    const { data } = await supabase
+      .from("term_periods")
+      .select("term, school_years!inner(is_active)")
+      .eq("school_years.is_active", true)
+      .lte("start_date", today)
+      .gte("end_date", today)
+      .maybeSingle();
+
+    if (data?.term) {
+      _cachedTerm  = data.term;
+      _cacheExpiry = now + 1000 * 60 * 60; // cache 1 hour
+      return data.term;
+    }
+  } catch (_) {
+    // fall through to hardcoded fallback
+  }
+
+  // Hardcoded fallback (original logic preserved)
+  return termFromDate();
+}
+
+// Clear the cache (call when admin changes the active SY / term dates)
+export function clearTermCache() {
+  _cachedTerm  = null;
+  _cacheExpiry = 0;
+}

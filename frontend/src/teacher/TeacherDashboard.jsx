@@ -20,7 +20,7 @@ export default function TeacherDashboard({ user, onLogout, onUpdateUser, courses
     dashboard: <Dashboard      user={user} courses={courses} enrollments={enrollments} />,
     courses:   <TeacherCourses user={user} courses={courses} setCourses={setCourses} allUsers={allUsers} enrollments={enrollments} examSubmissions={examSubmissions} />,
     profile:   <TeacherProfile user={user} onUpdateUser={onUpdateUser} />,
-    chat:      <ChatPage       user={user} />,
+    chat:      <ChatPage       user={user} courses={courses} enrollments={enrollments} />,
   };
 
   return (

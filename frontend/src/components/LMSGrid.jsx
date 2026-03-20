@@ -45,7 +45,7 @@ export default function LMSGrid({ columns, rowData, onRowClick, height = "100%",
             <tr>
               {columns.map(col => (
                 <th key={col.field + col.header} onClick={() => col.sortable !== false && toggleSort(col.field)}
-                  style={{ padding: "9px 12px", textAlign: "left", fontWeight: 700, fontSize: 10, letterSpacing: "0.07em", textTransform: "uppercase", color: "#475569", background: "#0f172a", borderBottom: "1px solid #1e293b", cursor: col.sortable !== false ? "pointer" : "default", userSelect: "none", whiteSpace: "nowrap", width: col.width || "auto" }}>
+                  style={{ padding: "9px 12px", textAlign: "left", fontWeight: 700, fontSize: 10, letterSpacing: "0.07em", textTransform: "uppercase", color: "#94a3b8", background: "#0f172a", borderBottom: "1px solid #1e293b", cursor: col.sortable !== false ? "pointer" : "default", userSelect: "none", whiteSpace: "nowrap", width: col.width || "auto" }}>
                   <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
                     {col.header}
                     {sc === col.field && <span style={{ color: "#6366f1" }}>{dir === "asc" ? "↑" : "↓"}</span>}

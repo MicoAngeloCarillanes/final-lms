@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useCallback } from "react";
 import { supabase } from "../../supabaseClient";
 import { EXAM_TERMS, TERM_META } from "../../lib/constants";
 import { gradeColor, csGradePct } from "../../lib/helpers";
@@ -21,6 +21,53 @@ export default function ClassStandingModal({ student, course, existing, teacherU
   const [vals,   setVals]   = useState(initVals);
   const [saving, setSaving] = useState(false);
   const [err,    setErr]    = useState("");
+
+  // ── Project-from-submission picker ────────────────────────────────────────
+  const [projPicker, setProjPicker] = useState(null);   // term string when open
+  const [projSubs,   setProjSubs]   = useState([]);
+  const [loadingProj,setLoadingProj]= useState(false);
+  const [projSource, setProjSource] = useState({});     // { [term]: materialTitle }
+
+  const openProjPicker = useCallback(async (term) => {
+    if (projPicker === term) { setProjPicker(null); return; }
+    setProjPicker(term);
+    if (!course._uuid || !student._uuid) return;
+    setLoadingProj(true);
+    const { data } = await supabase
+      .from("work_submissions")
+      .select("submission_id, score, submitted_at, materials(title, material_type)")
+      .eq("student_id", student._uuid)
+      .eq("status", "Graded")
+      .not("score", "is", null);
+    // Filter to this course + term
+    const courseMatIds = data
+      ? data.filter(ws => ws.materials).map(ws => ws)
+      : [];
+    // We need materials filtered by course_id + term — fetch them
+    const { data: mats } = await supabase
+      .from("materials")
+      .select("material_id, title, material_type, term")
+      .eq("course_id", course._uuid)
+      .eq("term", term)
+      .in("material_type", ["Lab", "Assignment"]);
+    const matMap = {};
+    (mats || []).forEach(m => { matMap[m.material_id] = m; });
+    const filtered = (data || []).filter(ws => matMap[ws.material_id]);
+    setProjSubs(filtered.map(ws => ({
+      submissionId: ws.submission_id,
+      score: ws.score,
+      title: matMap[ws.material_id]?.title || "—",
+      type: matMap[ws.material_id]?.material_type || "—",
+      submittedAt: ws.submitted_at,
+    })));
+    setLoadingProj(false);
+  }, [projPicker, course._uuid, student._uuid]);
+
+  const pickProjScore = (term, score, title) => {
+    upd(term, "project", score);
+    setProjSource(p => ({ ...p, [term]: title }));
+    setProjPicker(null);
+  };
 
   const upd = (term, field, raw) => {
     const v = raw === "" ? "" : Math.max(0, Math.min(100, Number(raw)));
@@ -119,14 +166,58 @@ export default function ClassStandingModal({ student, course, existing, teacherU
                     </td>
                     {["project", "recitation", "attendance"].map(field => (
                       <td key={field} style={{ padding: "8px 12px" }}>
-                        <input type="number" min={0} max={100}
-                          value={vals[term][field]}
-                          onChange={e => upd(term, field, e.target.value)}
-                          placeholder="—"
-                          style={{ width: 76, border: "1.5px solid #334155", background: "#0f172a", color: "#e2e8f0", borderRadius: 6, padding: "6px 8px", fontSize: 13, fontFamily: "inherit", textAlign: "center", outline: "none" }}
-                          onFocus={e => e.target.style.borderColor = "#6366f1"}
-                          onBlur={e  => e.target.style.borderColor = "#334155"}
-                        />
+                        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                          <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
+                            <input type="number" min={0} max={100}
+                              value={vals[term][field]}
+                              onChange={e => upd(term, field, e.target.value)}
+                              placeholder="—"
+                              style={{ width: 76, border: "1.5px solid #334155", background: "#0f172a", color: "#e2e8f0", borderRadius: 6, padding: "6px 8px", fontSize: 13, fontFamily: "inherit", textAlign: "center", outline: "none" }}
+                              onFocus={e => e.target.style.borderColor = "#6366f1"}
+                              onBlur={e  => e.target.style.borderColor = "#334155"}
+                            />
+                            {/* Submission picker — only for project */}
+                            {field === "project" && (
+                              <button
+                                title="Pick from graded submissions"
+                                onClick={() => openProjPicker(term)}
+                                style={{ background: projPicker===term ? "rgba(99,102,241,.25)" : "rgba(99,102,241,.1)", border: "1px solid rgba(99,102,241,.3)", borderRadius: 5, width: 26, height: 26, cursor: "pointer", color: "#a5b4fc", fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}
+                              >📎</button>
+                            )}
+                          </div>
+                          {/* Source label */}
+                          {field === "project" && projSource[term] && (
+                            <div style={{ fontSize: 10, color: "#64748b", maxWidth: 110, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                              📎 {projSource[term]}
+                            </div>
+                          )}
+                          {/* Picker dropdown */}
+                          {field === "project" && projPicker === term && (
+                            <div style={{ position: "absolute", zIndex: 50, marginTop: 2, background: "#1e293b", border: "1px solid #334155", borderRadius: 8, padding: 6, minWidth: 260, boxShadow: "0 8px 28px rgba(0,0,0,.4)" }}>
+                              <div style={{ fontSize: 10, fontWeight: 800, color: "#475569", textTransform: "uppercase", letterSpacing: ".06em", padding: "4px 6px 8px" }}>
+                                Graded submissions — {term}
+                              </div>
+                              {loadingProj && <div style={{ color: "#64748b", fontSize: 12, padding: "6px 8px" }}>Loading…</div>}
+                              {!loadingProj && projSubs.length === 0 && (
+                                <div style={{ color: "#64748b", fontSize: 12, padding: "6px 8px" }}>No graded Lab/Assignment submissions for this term.</div>
+                              )}
+                              {!loadingProj && projSubs.map(sub => (
+                                <div key={sub.submissionId}
+                                  onClick={() => pickProjScore(term, sub.score, sub.title)}
+                                  style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 8px", borderRadius: 6, cursor: "pointer", transition: "background .1s" }}
+                                  onMouseEnter={e => e.currentTarget.style.background="#334155"}
+                                  onMouseLeave={e => e.currentTarget.style.background="transparent"}
+                                >
+                                  <span style={{ fontSize: 11, background: "rgba(16,185,129,.12)", color: "#34d399", padding: "1px 6px", borderRadius: 3, fontWeight: 700 }}>{sub.type}</span>
+                                  <div style={{ flex: 1, minWidth: 0 }}>
+                                    <div style={{ fontSize: 12, color: "#e2e8f0", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{sub.title}</div>
+                                  </div>
+                                  <span style={{ fontWeight: 800, fontSize: 13, color: "#fbbf24", flexShrink: 0 }}>{sub.score}/100</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
                       </td>
                     ))}
                     <td style={{ padding: "10px 12px" }}>

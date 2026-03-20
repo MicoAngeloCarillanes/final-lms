@@ -142,3 +142,59 @@ textarea {
 /* Exam type badge */
 .exam-type-exam { background: rgba(245,158,11,.2); color: #fbbf24; }
 .exam-type-quiz { background: rgba(236,72,153,.2); color: #f472b6; }
+
+/* ═══════════════════════════════════════════════════════════
+   READABILITY FIXES — Feature Update
+   ═══════════════════════════════════════════════════════════ */
+
+/* 1. Secondary / muted text — was #475569 (too dark on dark surfaces).
+      All components using color: #64748b already pass; tighten the ones
+      that used the old 475569 value inline via a global nudge. */
+.text-muted   { color: #94a3b8 !important; }
+.label-muted  { color: #94a3b8 !important; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; }
+
+/* 2. GradingModal header title — was '#0f172a' (dark text on dark bg).
+      The .modal-box h1/h2/h3 rule above handles headings, but the
+      inline-styled div used fontWeight:900 with no class. Force it: */
+.grading-modal-title { color: #f1f5f9 !important; font-weight: 900; font-size: 15px; }
+
+/* 3. LMSGrid table header — bump from #64748b to #94a3b8 */
+.lms-grid-th,
+.lms-grid th {
+  color: #94a3b8 !important;
+}
+
+/* 4. Grade cell text legibility — ensure all 4 states are visible */
+.grade-cell-high { background: rgba(99,102,241,.18)  !important; color: #c4b5fd !important; font-weight: 900; border-radius: 5px; padding: 2px 8px; }
+.grade-cell-pass { background: rgba(16,185,129,.18)  !important; color: #6ee7b7 !important; font-weight: 800; border-radius: 5px; padding: 2px 8px; }
+.grade-cell-warn { background: rgba(245,158,11,.18)  !important; color: #fcd34d !important; font-weight: 800; border-radius: 5px; padding: 2px 8px; }
+.grade-cell-fail { background: rgba(239,68,68,.18)   !important; color: #fca5a5 !important; font-weight: 800; border-radius: 5px; padding: 2px 8px; }
+.grade-cell-none { color: #475569 !important; }
+
+/* 5. Status badge contrast — any badge rendered on a coloured pill bg
+      must use a shade visible against that bg (not pure black/white). */
+.badge-success { background: rgba(16,185,129,.15);  color: #6ee7b7 !important; border: 1px solid rgba(16,185,129,.35); border-radius: 9999px; padding: 2px 9px; font-size: 11px; font-weight: 700; }
+.badge-warning { background: rgba(245,158,11,.15);  color: #fcd34d !important; border: 1px solid rgba(245,158,11,.35); border-radius: 9999px; padding: 2px 9px; font-size: 11px; font-weight: 700; }
+.badge-danger  { background: rgba(239,68,68,.15);   color: #fca5a5 !important; border: 1px solid rgba(239,68,68,.35);  border-radius: 9999px; padding: 2px 9px; font-size: 11px; font-weight: 700; }
+.badge-info    { background: rgba(59,130,246,.15);  color: #93c5fd !important; border: 1px solid rgba(59,130,246,.35);  border-radius: 9999px; padding: 2px 9px; font-size: 11px; font-weight: 700; }
+.badge-default { background: rgba(100,116,139,.15); color: #cbd5e1 !important; border: 1px solid rgba(100,116,139,.35); border-radius: 9999px; padding: 2px 9px; font-size: 11px; font-weight: 700; }
+
+/* 6. Tab bar active / inactive legibility */
+.tab-active   { color: #f1f5f9 !important; font-weight: 800; }
+.tab-inactive { color: #94a3b8 !important; font-weight: 600; }
+.tab-inactive:hover { color: #cbd5e1 !important; }
+
+/* 7. TopBar title — ensure it always reads clearly */
+.topbar-title { color: #f1f5f9 !important; font-weight: 900; font-size: 16px; letter-spacing: -0.02em; }
+
+/* 8. Input placeholder contrast */
+input::placeholder, textarea::placeholder { color: #475569 !important; }
+
+/* 9. School-year and course-offering specific utility classes */
+.sy-active-badge   { background: rgba(16,185,129,.12); color: #34d399; border: 1px solid rgba(16,185,129,.25); border-radius: 5px; padding: 2px 8px; font-size: 10px; font-weight: 800; }
+.offering-card     { background: #1e293b; border: 1px solid #334155; border-radius: 10px; padding: 14px 16px; transition: border-color .15s; }
+.offering-card:hover { border-color: #4f46e5; }
+
+/* 10. Attendance summary table */
+.att-summary-table th { color: #94a3b8 !important; font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .06em; padding: 8px 12px; border-bottom: 1px solid #334155; }
+.att-summary-table td { padding: 10px 12px; border-bottom: 1px solid #1e293b; }
