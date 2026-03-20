@@ -8,7 +8,7 @@ import renderMarkdown from "../../student/components/renderMarkdown";
 import TeacherGradingDashboard from "./TeacherGradingDashboard";
 
 /** Dual-pane: left = instructions (+ edit mode), right = grading dashboard. */
-export default function TeacherAssignmentDetailView({ material, courseId, allUsers, user, onUpdate, gradeEntries, onGradeUpdate, enrollments }) {
+export default function TeacherAssignmentDetailView({ material, courseId, courseUuid, allUsers, user, onUpdate, gradeEntries, onGradeUpdate, enrollments }) {
   const [editMode,    setEditMode]    = useState(false);
   const [editTitle,   setEditTitle]   = useState(material.title);
   const [editContent, setEditContent] = useState(material.content || "");
@@ -172,6 +172,7 @@ export default function TeacherAssignmentDetailView({ material, courseId, allUse
           <TeacherGradingDashboard
             material={material}
             courseId={courseId}
+            courseUuid={courseUuid}
             allUsers={allUsers}
             user={user}
             gradeEntries={gradeEntries}

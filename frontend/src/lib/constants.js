@@ -4,16 +4,18 @@ export const MaterialType = Object.freeze({
   READING:    "Reading",
   LAB:        "Lab",
   ASSIGNMENT: "Assignment",
+  PROJECT:    "Project",
 });
 
 export const isSubmittable = (type) =>
-  type === MaterialType.LAB || type === MaterialType.ASSIGNMENT;
+  type === MaterialType.LAB || type === MaterialType.ASSIGNMENT || type === MaterialType.PROJECT;
 
 export const MAT_META = {
   [MaterialType.LECTURE]:    { icon: "🎙", color: "#a5b4fc", bg: "rgba(99,102,241,.2)",  light: "rgba(99,102,241,.1)",  label: "Lecture" },
   [MaterialType.READING]:    { icon: "📖", color: "#60a5fa", bg: "rgba(59,130,246,.2)",  light: "rgba(59,130,246,.1)",  label: "Reading" },
   [MaterialType.LAB]:        { icon: "🧪", color: "#34d399", bg: "rgba(16,185,129,.2)",  light: "rgba(16,185,129,.1)",  label: "Lab" },
   [MaterialType.ASSIGNMENT]: { icon: "📝", color: "#fbbf24", bg: "rgba(245,158,11,.2)",  light: "rgba(245,158,11,.1)",  label: "Assignment" },
+  [MaterialType.PROJECT]:    { icon: "🗂", color: "#c084fc", bg: "rgba(192,132,252,.2)",  light: "rgba(192,132,252,.1)",  label: "Project" },
 };
 
 // ─── Submission Status ────────────────────────────────────────────────────────
@@ -77,44 +79,3 @@ export const ALLOWED_MIME_TYPES = [
 // Quizzes (Lab/Assignment) = 30%, Class Standing = 30%, Exams = 40%
 // Within Exams: Quiz-type exams = 30% weight, Exam-type = 40% weight
 export const GRADE_WEIGHTS = { quiz: 0.30, classStanding: 0.30, exam: 0.40 };
-
-// ─── Dynamic Term Resolution ──────────────────────────────────────────────────
-// Replaces the hardcoded termFromDate(). Fetches the current term from
-// the active school year config in Supabase (term_periods table).
-// Falls back to hardcoded logic if no active SY is configured.
-
-let _cachedTerm = null;
-let _cacheExpiry = 0;
-
-export async function getCurrentTermDynamic(supabase) {
-  const now = Date.now();
-  if (_cachedTerm && now < _cacheExpiry) return _cachedTerm;
-
-  try {
-    const today = new Date().toISOString().slice(0, 10);
-    const { data } = await supabase
-      .from("term_periods")
-      .select("term, school_years!inner(is_active)")
-      .eq("school_years.is_active", true)
-      .lte("start_date", today)
-      .gte("end_date", today)
-      .maybeSingle();
-
-    if (data?.term) {
-      _cachedTerm  = data.term;
-      _cacheExpiry = now + 1000 * 60 * 60; // cache 1 hour
-      return data.term;
-    }
-  } catch (_) {
-    // fall through to hardcoded fallback
-  }
-
-  // Hardcoded fallback (original logic preserved)
-  return termFromDate();
-}
-
-// Clear the cache (call when admin changes the active SY / term dates)
-export function clearTermCache() {
-  _cachedTerm  = null;
-  _cacheExpiry = 0;
-}

@@ -8,7 +8,6 @@
  */
 import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "../../supabaseClient";
-import { announcementApi } from "../../lib/api";
 import {
   MAT_META, MaterialType, isSubmittable,
   EXAM_TERMS, TERM_META, termFromDate,
@@ -23,6 +22,7 @@ import { Badge, Btn, StatCard } from "../../components/ui";
 import TopBar   from "../../components/TopBar";
 import { TypeBadge } from "../components/TypeBadge";
 import MaterialDetailView from "../components/MaterialDetailView";
+import StudentAttendanceTab from "../components/StudentAttendanceTab";
 import ExamTaker          from "../components/ExamTaker";
 
 // ─── Dark theme tokens (matches rest of app) ──────────────────────────────────
@@ -59,13 +59,19 @@ function StreamTab({ course, upcoming }) {
   useEffect(() => {
     if (!course._uuid) return;
     setLoading(true);
-    announcementApi.getCourse(course._uuid)
-      .then(data => { setPosts(data); setLoading(false); })
-      .catch(() => setLoading(false));
+    supabase.from("announcements").select("*")
+      .eq("course_id", course._uuid)
+      .order("pinned", { ascending: false })
+      .order("created_at", { ascending: false })
+      .then(({ data }) => { setPosts(data || []); setLoading(false); });
 
-    const sub = announcementApi.subscribeCourse(course._uuid, () => {
-      announcementApi.getCourse(course._uuid).then(setPosts).catch(console.error);
-    });
+    const sub = supabase.channel(`s-course-ann-${course._uuid}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "announcements",
+        filter: `course_id=eq.${course._uuid}` }, () => {
+        supabase.from("announcements").select("*").eq("course_id", course._uuid)
+          .order("pinned",{ascending:false}).order("created_at",{ascending:false})
+          .then(({ data }) => setPosts(data || []));
+      }).subscribe();
     return () => sub.unsubscribe();
   }, [course._uuid]);
 
@@ -469,9 +475,10 @@ function CourseRoom({ course, user, mats, exams, examSubmissions, workSubmission
   const [tab, setTab] = useState("stream");
 
   const TABS = [
-    { id: "stream",    label: "Stream"    },
-    { id: "classwork", label: "Classwork" },
-    { id: "grades",    label: "Grades"    },
+    { id: "stream",     label: "Dashboard"  },
+    { id: "classwork",  label: "Classwork"  },
+    { id: "attendance", label: "Attendance" },
+    { id: "grades",     label: "Grades"     },
   ];
 
   const bg = bannerColor(course.code);
@@ -544,6 +551,12 @@ function CourseRoom({ course, user, mats, exams, examSubmissions, workSubmission
               examSubmissions={examSubmissions} workSubmissions={workSubmissions}
               onOpenMaterial={onOpenMaterial} onTakeExam={onTakeExam}
             />
+          </div>
+        )}
+
+        {tab === "attendance" && (
+          <div style={{ maxWidth: 900, margin: "0 auto", padding: "0 24px" }}>
+            <StudentAttendanceTab course={course} user={user} />
           </div>
         )}
 

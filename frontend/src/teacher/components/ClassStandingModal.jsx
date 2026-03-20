@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useEffect } from "react";
 import { supabase } from "../../supabaseClient";
 import { EXAM_TERMS, TERM_META } from "../../lib/constants";
 import { gradeColor, csGradePct } from "../../lib/helpers";
@@ -18,56 +18,62 @@ export default function ClassStandingModal({ student, course, existing, teacherU
     return s;
   };
 
-  const [vals,   setVals]   = useState(initVals);
-  const [saving, setSaving] = useState(false);
-  const [err,    setErr]    = useState("");
+  const [vals,          setVals]          = useState(initVals);
+  const [saving,        setSaving]        = useState(false);
+  const [err,           setErr]           = useState("");
+  // Track which terms have a project grade coming from a graded submission
+  const [subProjectGrades, setSubProjectGrades] = useState({}); // { [term]: score }
 
-  // ── Project-from-submission picker ────────────────────────────────────────
-  const [projPicker, setProjPicker] = useState(null);   // term string when open
-  const [projSubs,   setProjSubs]   = useState([]);
-  const [loadingProj,setLoadingProj]= useState(false);
-  const [projSource, setProjSource] = useState({});     // { [term]: materialTitle }
+  // ── Load graded Project submission scores per term ─────────────────────────
+  // When a teacher grades a "Project" material, it auto-syncs to class_standing.
+  // This effect loads those scores so the modal can show where the grade came from.
+  useEffect(() => {
+    if (!student._uuid || !course._uuid) return;
+    (async () => {
+      // Find all graded Project submissions for this student in this course
+      const { data: mats } = await supabase
+        .from("materials")
+        .select("material_id, term")
+        .eq("course_id", course._uuid)
+        .eq("material_type", "Project");
 
-  const openProjPicker = useCallback(async (term) => {
-    if (projPicker === term) { setProjPicker(null); return; }
-    setProjPicker(term);
-    if (!course._uuid || !student._uuid) return;
-    setLoadingProj(true);
-    const { data } = await supabase
-      .from("work_submissions")
-      .select("submission_id, score, submitted_at, materials(title, material_type)")
-      .eq("student_id", student._uuid)
-      .eq("status", "Graded")
-      .not("score", "is", null);
-    // Filter to this course + term
-    const courseMatIds = data
-      ? data.filter(ws => ws.materials).map(ws => ws)
-      : [];
-    // We need materials filtered by course_id + term — fetch them
-    const { data: mats } = await supabase
-      .from("materials")
-      .select("material_id, title, material_type, term")
-      .eq("course_id", course._uuid)
-      .eq("term", term)
-      .in("material_type", ["Lab", "Assignment"]);
-    const matMap = {};
-    (mats || []).forEach(m => { matMap[m.material_id] = m; });
-    const filtered = (data || []).filter(ws => matMap[ws.material_id]);
-    setProjSubs(filtered.map(ws => ({
-      submissionId: ws.submission_id,
-      score: ws.score,
-      title: matMap[ws.material_id]?.title || "—",
-      type: matMap[ws.material_id]?.material_type || "—",
-      submittedAt: ws.submitted_at,
-    })));
-    setLoadingProj(false);
-  }, [projPicker, course._uuid, student._uuid]);
+      if (!mats?.length) return;
 
-  const pickProjScore = (term, score, title) => {
-    upd(term, "project", score);
-    setProjSource(p => ({ ...p, [term]: title }));
-    setProjPicker(null);
-  };
+      const matIds = mats.map(m => m.material_id);
+      const { data: subs } = await supabase
+        .from("work_submissions")
+        .select("material_id, score")
+        .eq("student_id", student._uuid)
+        .eq("status", "Graded")
+        .in("material_id", matIds);
+
+      if (!subs?.length) return;
+
+      // Map: term → latest graded project score (take the most recent one per term)
+      const termMap = {};
+      mats.forEach(mat => {
+        const sub = subs.find(s => s.material_id === mat.material_id);
+        if (sub?.score != null && mat.term) {
+          // If multiple projects in same term, take highest score
+          if (termMap[mat.term] == null || sub.score > termMap[mat.term]) {
+            termMap[mat.term] = sub.score;
+          }
+        }
+      });
+      setSubProjectGrades(termMap);
+
+      // Pre-fill vals.project for terms that don't already have a manual entry
+      setVals(prev => {
+        const next = { ...prev };
+        EXAM_TERMS.forEach(t => {
+          if (termMap[t] != null && prev[t].project === "") {
+            next[t] = { ...prev[t], project: termMap[t] };
+          }
+        });
+        return next;
+      });
+    })();
+  }, [student._uuid, course._uuid]);
 
   const upd = (term, field, raw) => {
     const v = raw === "" ? "" : Math.max(0, Math.min(100, Number(raw)));
@@ -144,6 +150,12 @@ export default function ClassStandingModal({ student, course, existing, teacherU
             <div style={{ fontSize: 11, color: "#16a34a", marginTop: 3 }}>
               Class Standing % = average(Project + Recitation + Attendance) — each scored out of 100
             </div>
+            <div style={{ fontSize: 11, color: "#c084fc", marginTop: 4, display: "flex", alignItems: "center", gap: 5 }}>
+              📎 <strong>Project</strong> is auto-synced when a teacher grades a <strong>Project</strong> material in Classwork. Override manually if needed.
+            </div>
+            <div style={{ fontSize: 11, color: "#34d399", marginTop: 4, display: "flex", alignItems: "center", gap: 5 }}>
+              🔄 <strong>Attendance</strong> is auto-synced from the <strong>Attendance tab</strong> — use "Sync to Class Standing" there, or override it manually here.
+            </div>
           </div>
 
           {/* Input grid */}
@@ -164,62 +176,54 @@ export default function ClassStandingModal({ student, course, existing, teacherU
                     <td style={{ padding: "10px 12px" }}>
                       <span style={{ fontSize: 11, fontWeight: 800, color: tm.color, background: tm.bg, padding: "3px 10px", borderRadius: 9999 }}>{term}</span>
                     </td>
-                    {["project", "recitation", "attendance"].map(field => (
-                      <td key={field} style={{ padding: "8px 12px" }}>
-                        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                          <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
-                            <input type="number" min={0} max={100}
-                              value={vals[term][field]}
-                              onChange={e => upd(term, field, e.target.value)}
-                              placeholder="—"
-                              style={{ width: 76, border: "1.5px solid #334155", background: "#0f172a", color: "#e2e8f0", borderRadius: 6, padding: "6px 8px", fontSize: 13, fontFamily: "inherit", textAlign: "center", outline: "none" }}
-                              onFocus={e => e.target.style.borderColor = "#6366f1"}
-                              onBlur={e  => e.target.style.borderColor = "#334155"}
-                            />
-                            {/* Submission picker — only for project */}
-                            {field === "project" && (
-                              <button
-                                title="Pick from graded submissions"
-                                onClick={() => openProjPicker(term)}
-                                style={{ background: projPicker===term ? "rgba(99,102,241,.25)" : "rgba(99,102,241,.1)", border: "1px solid rgba(99,102,241,.3)", borderRadius: 5, width: 26, height: 26, cursor: "pointer", color: "#a5b4fc", fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}
-                              >📎</button>
-                            )}
-                          </div>
-                          {/* Source label */}
-                          {field === "project" && projSource[term] && (
-                            <div style={{ fontSize: 10, color: "#64748b", maxWidth: 110, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                              📎 {projSource[term]}
-                            </div>
-                          )}
-                          {/* Picker dropdown */}
-                          {field === "project" && projPicker === term && (
-                            <div style={{ position: "absolute", zIndex: 50, marginTop: 2, background: "#1e293b", border: "1px solid #334155", borderRadius: 8, padding: 6, minWidth: 260, boxShadow: "0 8px 28px rgba(0,0,0,.4)" }}>
-                              <div style={{ fontSize: 10, fontWeight: 800, color: "#475569", textTransform: "uppercase", letterSpacing: ".06em", padding: "4px 6px 8px" }}>
-                                Graded submissions — {term}
-                              </div>
-                              {loadingProj && <div style={{ color: "#64748b", fontSize: 12, padding: "6px 8px" }}>Loading…</div>}
-                              {!loadingProj && projSubs.length === 0 && (
-                                <div style={{ color: "#64748b", fontSize: 12, padding: "6px 8px" }}>No graded Lab/Assignment submissions for this term.</div>
-                              )}
-                              {!loadingProj && projSubs.map(sub => (
-                                <div key={sub.submissionId}
-                                  onClick={() => pickProjScore(term, sub.score, sub.title)}
-                                  style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 8px", borderRadius: 6, cursor: "pointer", transition: "background .1s" }}
-                                  onMouseEnter={e => e.currentTarget.style.background="#334155"}
-                                  onMouseLeave={e => e.currentTarget.style.background="transparent"}
-                                >
-                                  <span style={{ fontSize: 11, background: "rgba(16,185,129,.12)", color: "#34d399", padding: "1px 6px", borderRadius: 3, fontWeight: 700 }}>{sub.type}</span>
-                                  <div style={{ flex: 1, minWidth: 0 }}>
-                                    <div style={{ fontSize: 12, color: "#e2e8f0", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{sub.title}</div>
-                                  </div>
-                                  <span style={{ fontWeight: 800, fontSize: 13, color: "#fbbf24", flexShrink: 0 }}>{sub.score}/100</span>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      </td>
-                    ))}
+                    {/* Project field — shows submission-sourced hint if auto-synced */}
+                    <td style={{ padding: "8px 12px" }}>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                        <input type="number" min={0} max={100}
+                          value={vals[term]["project"]}
+                          onChange={e => upd(term, "project", e.target.value)}
+                          placeholder="—"
+                          style={{
+                            width: 76, border: `1.5px solid ${subProjectGrades[term] != null ? "rgba(192,132,252,.5)" : "#334155"}`,
+                            background: subProjectGrades[term] != null ? "rgba(192,132,252,.08)" : "#0f172a",
+                            color: "#e2e8f0", borderRadius: 6, padding: "6px 8px",
+                            fontSize: 13, fontFamily: "inherit", textAlign: "center", outline: "none"
+                          }}
+                          onFocus={e => e.target.style.borderColor = "#6366f1"}
+                          onBlur={e  => e.target.style.borderColor = subProjectGrades[term] != null ? "rgba(192,132,252,.5)" : "#334155"}
+                          title={subProjectGrades[term] != null ? "Auto-synced from graded Project submission · You can override manually" : "Enter project grade manually"}
+                        />
+                        {subProjectGrades[term] != null && (
+                          <span style={{ fontSize: 9, color: "#c084fc", textAlign: "center", fontWeight: 700 }}>📎 from submission</span>
+                        )}
+                      </div>
+                    </td>
+                    {/* Recitation field */}
+                    <td style={{ padding: "8px 12px" }}>
+                      <input type="number" min={0} max={100}
+                        value={vals[term]["recitation"]}
+                        onChange={e => upd(term, "recitation", e.target.value)}
+                        placeholder="—"
+                        style={{ width: 76, border: "1.5px solid #334155", background: "#0f172a", color: "#e2e8f0", borderRadius: 6, padding: "6px 8px", fontSize: 13, fontFamily: "inherit", textAlign: "center", outline: "none" }}
+                        onFocus={e => e.target.style.borderColor = "#6366f1"}
+                        onBlur={e  => e.target.style.borderColor = "#334155"}
+                      />
+                    </td>
+                    {/* Attendance — auto-computed from Attendance tab; editable as manual override */}
+                    <td style={{ padding: "8px 12px" }}>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                        <input type="number" min={0} max={100}
+                          value={vals[term]["attendance"]}
+                          onChange={e => upd(term, "attendance", e.target.value)}
+                          placeholder="—"
+                          style={{ width: 76, border: "1.5px solid #334155", background: "#0f172a", color: "#e2e8f0", borderRadius: 6, padding: "6px 8px", fontSize: 13, fontFamily: "inherit", textAlign: "center", outline: "none" }}
+                          onFocus={e => e.target.style.borderColor = "#6366f1"}
+                          onBlur={e  => e.target.style.borderColor = "#334155"}
+                          title="Auto-synced from Attendance tab · You can override manually"
+                        />
+                        <span style={{ fontSize: 9, color: "#475569", textAlign: "center" }}>🔄 from Attendance</span>
+                      </div>
+                    </td>
                     <td style={{ padding: "10px 12px" }}>
                       {cs != null
                         ? <span style={{ fontWeight: 900, fontSize: 15, color: gradeColor(cs) }}>{cs}%</span>

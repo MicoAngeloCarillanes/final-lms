@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { supabase } from "../../supabaseClient";
 import { gradeColor } from "../../lib/helpers";
+import { MaterialType } from "../../lib/constants";
 import { Badge, Btn } from "../../components/ui";
 import GradingModal from "./GradingModal";
 
@@ -10,7 +11,7 @@ import GradingModal from "./GradingModal";
  * and a "View & Grade" action per row.
  * Uses Supabase Realtime to push new/updated submissions to the teacher live.
  */
-export default function TeacherGradingDashboard({ material, courseId, allUsers, user, gradeEntries, onGradeUpdate, enrollments }) {
+export default function TeacherGradingDashboard({ material, courseId, courseUuid, allUsers, user, gradeEntries, onGradeUpdate, enrollments }) {
   const [roster,      setRoster]      = useState([]);
   const [modalSub,    setModalSub]    = useState(null);
   const [savedToast,  setSavedToast]  = useState("");
@@ -108,6 +109,25 @@ export default function TeacherGradingDashboard({ material, courseId, allUsers, 
       return;
     }
 
+    // ── Auto-sync Project grade → class_standing.project ──────────────────────
+    // When a "Project" material is graded, write the score directly into
+    // class_standing so the teacher doesn't have to re-enter it manually.
+    if (material.type === MaterialType.PROJECT && g != null && courseUuid) {
+      const studentUser = allUsers.find(u => u.id === updated.studentId);
+      const studentUuid = studentUser?._uuid;
+      const term        = material.term || "Prelim";
+      if (studentUuid) {
+        await supabase.from("class_standing").upsert({
+          student_id:  studentUuid,
+          course_id:   courseUuid,
+          term,
+          project:     g,
+          updated_by:  user?._uuid ?? null,
+          updated_at:  new Date().toISOString(),
+        }, { onConflict: "student_id,course_id,term", ignoreDuplicates: false });
+      }
+    }
+
     setRoster(prev => prev.map(r =>
       r.studentId === updated.studentId
         ? { ...updated, grade: g, status: g != null ? "Graded" : updated.status }
@@ -115,7 +135,11 @@ export default function TeacherGradingDashboard({ material, courseId, allUsers, 
     ));
     onGradeUpdate({ ...updated, grade: g, status: g != null ? "Graded" : updated.status });
     setModalSub(null);
-    setSavedToast(`Grade saved for ${updated.studentName}`);
+    setSavedToast(
+      material.type === MaterialType.PROJECT && g != null
+        ? `Grade saved & synced to Class Standing for ${updated.studentName}`
+        : `Grade saved for ${updated.studentName}`
+    );
     setTimeout(() => setSavedToast(""), 2500);
   };
 
@@ -127,6 +151,11 @@ export default function TeacherGradingDashboard({ material, courseId, allUsers, 
       <div style={{ padding: "9px 15px", borderBottom: "1px solid #1e293b", background: "#0f172a", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <span style={{ fontSize: 10, fontWeight: 800, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.07em" }}>📋 Submissions & Grading</span>
+          {material.type === MaterialType.PROJECT && (
+            <span style={{ fontSize: 9, fontWeight: 800, color: "#c084fc", background: "rgba(192,132,252,.15)", padding: "2px 8px", borderRadius: 9999, border: "1px solid rgba(192,132,252,.3)" }}>
+              🗂 Project — grade auto-syncs to Class Standing
+            </span>
+          )}
           <span style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 10, fontWeight: 700, color: "#10b981" }}>
             <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#10b981", display: "inline-block", animation: "timerPulse 2s infinite" }} />
             Live

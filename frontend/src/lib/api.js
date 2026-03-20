@@ -221,59 +221,13 @@ export const programApi = {
 };
 
 // ─── Announcements (Supabase) ─────────────────────────────────────────────────
-//
-// SEPARATION:
-//   Dashboard announcements  → course_id IS NULL  (global/school-wide)
-//   Course stream announcements → course_id = <uuid>  (course-scoped)
-//
-// VISIBILITY rules for dashboard announcements:
-//   admin / sub_admin  → all global announcements
-//   teacher            → global announcements authored by admin/sub_admin,
-//                        PLUS their own global posts
-//   student            → global announcements where category != internal
-//                        (admin controls what students see via category)
-//
 export const announcementApi = {
-  // Legacy getAll — kept for SubAdminAnnouncements which manages all posts
   async getAll() {
     const { data, error } = await supabase.from("announcements").select("*")
-      .is("course_id", null)
       .order("pinned", { ascending: false }).order("created_at", { ascending: false });
     if (error) throw new Error(error.message);
     return data ?? [];
   },
-
-  // Role-filtered dashboard fetch — global announcements only (course_id IS NULL)
-  async getDashboard(role, userUuid) {
-    let q = supabase.from("announcements").select("*").is("course_id", null);
-
-    if (role === "student") {
-      // Students see announcements explicitly targeted to them
-      // (admin marks category as "General", "Academic", or "Events" — not "Staff")
-      q = q.neq("category", "Staff");
-    } else if (role === "teacher") {
-      // Teachers see everything global except student-only notices
-      q = q.neq("category", "Students");
-    }
-    // admin / sub_admin see all global announcements (no extra filter)
-
-    const { data, error } = await q
-      .order("pinned", { ascending: false })
-      .order("created_at", { ascending: false });
-    if (error) throw new Error(error.message);
-    return data ?? [];
-  },
-
-  // Course-scoped fetch (used by StreamTab in TeacherCourses / StudentCourses)
-  async getCourse(courseUuid) {
-    const { data, error } = await supabase.from("announcements").select("*")
-      .eq("course_id", courseUuid)
-      .order("pinned", { ascending: false })
-      .order("created_at", { ascending: false });
-    if (error) throw new Error(error.message);
-    return data ?? [];
-  },
-
   async create({ authorId, authorName, authorRole, title, body, category = "General", pinned = false, courseId = null }) {
     const { data, error } = await supabase.from("announcements")
       .insert({ author_id: authorId, author_name: authorName, author_role: authorRole, title, body, category, pinned, course_id: courseId || null })
@@ -290,20 +244,9 @@ export const announcementApi = {
     const { error } = await supabase.from("announcements").delete().eq("id", id);
     if (error) throw new Error(error.message);
   },
-
-  // Subscribe to global dashboard announcements only
   subscribe(callback) {
-    return supabase.channel("announcements-dashboard-rt")
-      .on("postgres_changes", { event: "*", schema: "public", table: "announcements",
-          filter: "course_id=is.null" }, callback)
-      .subscribe();
-  },
-
-  // Subscribe to a specific course's announcements
-  subscribeCourse(courseUuid, callback) {
-    return supabase.channel(`announcements-course-${courseUuid}`)
-      .on("postgres_changes", { event: "*", schema: "public", table: "announcements",
-          filter: `course_id=eq.${courseUuid}` }, callback)
+    return supabase.channel("announcements-rt")
+      .on("postgres_changes", { event: "*", schema: "public", table: "announcements" }, callback)
       .subscribe();
   },
 };

@@ -9,7 +9,6 @@
  */
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { supabase } from "../../supabaseClient";
-import { announcementApi } from "../../lib/api";
 import {
   MAT_META, MaterialType, isSubmittable,
   EXAM_TERMS, TERM_META, QT_META, termFromDate,
@@ -24,6 +23,8 @@ import { TypeBadge } from "../../student/components/TypeBadge";
 import ExamBuilder               from "../components/ExamBuilder";
 import TeacherMaterialDetailView from "../components/TeacherMaterialDetailView";
 import ClassStandingModal        from "../components/ClassStandingModal";
+import TeacherAttendanceTab      from "../components/TeacherAttendanceTab";
+import { useCurrentTerm, fetchTermSettings, termFromDateWithSettings } from "../../lib/termSettingsHelper";
 
 // ─── Color palette (matches existing dark theme) ──────────────────────────────
 const C = {
@@ -70,42 +71,47 @@ function StreamTab({ course, user }) {
   useEffect(() => {
     if (!course._uuid) return;
     setLoading(true);
-    announcementApi.getCourse(course._uuid)
-      .then(data => { setPosts(data); setLoading(false); })
-      .catch(() => setLoading(false));
+    supabase.from("announcements").select("*")
+      .eq("course_id", course._uuid)
+      .order("pinned", { ascending: false })
+      .order("created_at", { ascending: false })
+      .then(({ data }) => { setPosts(data || []); setLoading(false); });
 
-    const sub = announcementApi.subscribeCourse(course._uuid, () => {
-      announcementApi.getCourse(course._uuid).then(setPosts).catch(console.error);
-    });
+    const sub = supabase.channel(`course-ann-${course._uuid}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "announcements",
+        filter: `course_id=eq.${course._uuid}` }, () => {
+        supabase.from("announcements").select("*").eq("course_id", course._uuid)
+          .order("pinned",{ ascending:false }).order("created_at",{ ascending:false })
+          .then(({ data }) => setPosts(data || []));
+      }).subscribe();
     return () => sub.unsubscribe();
   }, [course._uuid]);
 
   const post = async () => {
     if (!body.trim()) return;
     setPosting(true);
-    try {
-      const data = await announcementApi.create({
-        authorId:   user._uuid,
-        authorName: user.fullName,
-        authorRole: "teacher",
-        title:      title.trim() || `${course.code} — ${new Date().toLocaleDateString("en-US",{month:"short",day:"numeric"})}`,
-        body:       body.trim(),
-        category:   "Academic",
-        pinned:     false,
-        courseId:   course._uuid,
-      });
-      setPosts(prev => [data, ...prev]);
-    } catch (e) { console.error(e); }
+    const payload = {
+      author_id:   user._uuid,
+      author_name: user.fullName,
+      author_role: "teacher",
+      title:       title.trim() || `${course.code} — ${new Date().toLocaleDateString("en-US",{month:"short",day:"numeric"})}`,
+      body:        body.trim(),
+      category:    "Academic",
+      pinned:      false,
+      course_id:   course._uuid,
+    };
+    const { data, error } = await supabase.from("announcements").insert(payload).select().single();
+    if (!error && data) setPosts(prev => [data, ...prev]);
     setTitle(""); setBody(""); setOpen(false); setPosting(false);
   };
 
   const del = async (id) => {
-    await announcementApi.delete(id);
+    await supabase.from("announcements").delete().eq("id", id);
     setPosts(prev => prev.filter(p => p.id !== id));
   };
 
   const pin = async (ann) => {
-    const data = await announcementApi.update(ann.id, { pinned: !ann.pinned });
+    const { data } = await supabase.from("announcements").update({ pinned: !ann.pinned }).eq("id", ann.id).select().single();
     if (data) setPosts(prev => prev.map(p => p.id === data.id ? data : p));
   };
 
@@ -230,7 +236,12 @@ function ClassworkTab({
 }) {
   const [createMenu,  setCreateMenu]  = useState(false);
   const [createType,  setCreateType]  = useState(null);  // "material" | "exam"
+  const autoTerm = useCurrentTerm();
   const [matF,        setMatF]        = useState({ title: "", type: "Lecture", term: termFromDate(), description: "", dueDate: "" });
+  // Sync default term from DB settings once loaded
+  React.useEffect(() => {
+    setMatF(f => ({ ...f, term: autoTerm }));
+  }, [autoTerm]);
   const [exF,         setExF]         = useState({ title: "" });
   const [toast,       setToast]       = useState("");
   const [pendingFile, setPendingFile] = useState(null);
@@ -355,7 +366,7 @@ function ClassworkTab({
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
             <FF label="Type">
               <Sel value={matF.type} onChange={e => setMatF(f => ({...f,type:e.target.value}))}>
-                {["Lecture","Reading","Lab","Assignment"].map(t => <option key={t}>{t}</option>)}
+                {["Lecture","Reading","Lab","Assignment","Project"].map(t => <option key={t}>{t}</option>)}
               </Sel>
             </FF>
             <FF label="Term">
@@ -364,7 +375,7 @@ function ClassworkTab({
               </Sel>
             </FF>
           </div>
-          {(matF.type === "Lab" || matF.type === "Assignment") && (
+          {(matF.type === "Lab" || matF.type === "Assignment" || matF.type === "Project") && (
             <FF label="Due Date">
               <Input type="date" value={matF.dueDate||""} min={new Date().toISOString().slice(0,10)}
                 onChange={e => setMatF(f => ({...f,dueDate:e.target.value}))} />
@@ -518,7 +529,7 @@ function PeopleTab({ course, user, allUsers, examSubmissions, enrollments }) {
   const getTermData = (studentDisplayId, studentUuid) => {
     const result = {};
     EXAM_TERMS.forEach(term => {
-      const cwMats = allMaterials.filter(m => m.course_id===course._uuid && m.term===term && (m.material_type==="Lab"||m.material_type==="Assignment"));
+      const cwMats = allMaterials.filter(m => m.course_id===course._uuid && m.term===term && (m.material_type==="Lab"||m.material_type==="Assignment"||m.material_type==="Project"));
       const cwSubs = cwMats.map(m => { const w=allWorkSubs.find(w=>w.material_id===m.material_id&&w.student_id===studentUuid); return w?w.score:null; }).filter(x=>x!=null);
       const cw = cwSubs.length>0?Math.round(cwSubs.reduce((a,b)=>a+b,0)/cwSubs.length):null;
       const csEntry = classStandings.find(cs=>cs.studentUuid===studentUuid&&cs.courseUuid===course._uuid&&cs.term===term)||null;
@@ -659,9 +670,10 @@ function CourseRoom({ course, user, mats, exams, enrollments, allUsers, examSubm
   const [tab, setTab] = useState("stream");
 
   const TABS = [
-    { id:"stream",    label:"Dashboard"    },
-    { id:"classwork", label:"Classwork" },
-    { id:"people",    label:"Grade"    },
+    { id:"stream",     label:"Dashboard"   },
+    { id:"classwork",  label:"Classwork"   },
+    { id:"attendance", label:"Attendance"  },
+    { id:"people",     label:"Grade"       },
   ];
 
   const toggleStatus = async () => {
@@ -753,6 +765,16 @@ function CourseRoom({ course, user, mats, exams, enrollments, allUsers, examSubm
           </div>
         )}
 
+        {/* Attendance */}
+        {tab === "attendance" && (
+          <div style={{ maxWidth: 1100, margin:"0 auto", padding:"0 24px" }}>
+            <TeacherAttendanceTab
+              course={course} user={user}
+              enrollments={enrollments} allUsers={allUsers}
+            />
+          </div>
+        )}
+
         {/* People (Grades) */}
         {tab === "people" && (
           <div style={{ padding:"0 24px" }}>
@@ -807,7 +829,8 @@ export default function TeacherCourses({ user, courses, setCourses, allUsers, en
     const payload = {
       course_id:       selCourse._uuid, created_by: user._uuid,
       title:           matF.title.trim(), material_type: matF.type,
-      description:     matF.description?.trim()||null,
+      description:     null,                             // header subtitle — left blank on create
+      content:         matF.description?.trim() || null, // body panel — stores the typed instructions
       attachment_name: matF.attachmentName||null, is_published: true,
     };
     if (matF.term)    payload.term     = matF.term;

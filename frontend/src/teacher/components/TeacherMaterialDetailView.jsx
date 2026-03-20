@@ -39,6 +39,7 @@ export default function TeacherMaterialDetailView({ material, course, allUsers, 
         ? <TeacherAssignmentDetailView
             material={material}
             courseId={course?.id}
+            courseUuid={course?._uuid}
             allUsers={allUsers}
             user={user}
             onUpdate={onUpdate}

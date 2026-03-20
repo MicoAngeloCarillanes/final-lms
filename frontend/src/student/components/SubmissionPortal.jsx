@@ -119,7 +119,7 @@ export default function SubmissionPortal({ material, user, existingSubmission, o
       <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
         {!submitted
           ? <Btn onClick={submit} disabled={!file} style={{ flex: 1, justifyContent: "center" }}>
-              ↑ Submit {material.type === MaterialType.LAB ? "Lab" : "Assignment"}
+              ↑ Submit {material.type === MaterialType.LAB ? "Lab" : material.type === "Project" ? "Project" : "Assignment"}
             </Btn>
           : <>
               <div style={{ flex: 1, padding: "8px 12px", background: "rgba(16,185,129,.15)", borderRadius: 6, fontSize: 12, fontWeight: 700, color: "#34d399", display: "flex", alignItems: "center", gap: 6 }}>

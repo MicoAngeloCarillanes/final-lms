@@ -1,5 +1,6 @@
 import React, { useState, useRef } from "react";
 import { QT_META, EXAM_TERMS, termFromDate } from "../../lib/constants";
+import { useCurrentTerm, termFromDateWithSettings, fetchTermSettings } from "../../lib/termSettingsHelper";
 import { Btn, Input } from "../../components/ui";
 import { ExamSchema, blankQ } from "./examSchema";
 import QuestionItem from "./QuestionItem";
@@ -15,7 +16,13 @@ export default function ExamBuilder({ course, initialExam, onSave, onBack }) {
   const [date,        setDate]        = useState(initialExam?.date       || "");
   const [startTime,   setStartTime]   = useState(initialExam?.startTime  || "");
   const [endTime,     setEndTime]     = useState(initialExam?.endTime    || "");
+  const autoTerm = useCurrentTerm();
   const [term,        setTerm]        = useState(initialExam?.term       || termFromDate());
+  // Update term default once DB settings load (only if user hasn't manually changed it yet)
+  React.useEffect(() => {
+    if (!initialExam?.term) setTerm(autoTerm);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoTerm]);
   const [qTimer,      setQTimer]      = useState(initialExam?.qTimer     || 3);   // minutes per question
   const [randomize,   setRandomize]   = useState(initialExam?.randomize  ?? true);
   const [noBacktrack, setNoBacktrack] = useState(initialExam?.noBacktrack ?? true);
@@ -32,10 +39,13 @@ export default function ExamBuilder({ course, initialExam, onSave, onBack }) {
   const activeQ  = examQuestions.find(q => q.id === activeQId) || null;
   const totalPts = examQuestions.reduce((s, q) => s + (q.points || 0), 0);
 
-  // Auto-set term when date changes
-  const handleDateChange = (val) => {
+  // Auto-set term when date changes (uses DB settings if loaded)
+  const handleDateChange = async (val) => {
     setDate(val);
-    if (val) setTerm(termFromDate(new Date(val)));
+    if (val) {
+      const settings = await fetchTermSettings();
+      setTerm(termFromDateWithSettings(new Date(val), settings));
+    }
   };
 
   // Validate start < end time
