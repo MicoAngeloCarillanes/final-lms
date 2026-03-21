@@ -11,7 +11,7 @@ export default function AssignmentView({ material, user, existingSubmission, onS
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
       {/* Banner */}
-      <div style={{ background: `linear-gradient(135deg,${m.light} 0%,#fff 100%)`, borderBottom: "1px solid #334155", padding: "12px 20px", flexShrink: 0 }}>
+      <div style={{ background: `linear-gradient(135deg,${m.light} 0%,#1e293b 100%)`, borderBottom: "1px solid #334155", padding: "12px 20px", flexShrink: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 11 }}>
           <div style={{ width: 40, height: 40, borderRadius: 10, background: m.bg, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, flexShrink: 0 }}>
             {m.icon}
@@ -59,7 +59,7 @@ export default function AssignmentView({ material, user, existingSubmission, onS
         </div>
 
         {/* RIGHT — submission portal */}
-        <div style={{ width: 300, display: "flex", flexDirection: "column", overflow: "hidden", flexShrink: 0, background: "#fdfdff" }}>
+        <div style={{ width: 320, display: "flex", flexDirection: "column", overflow: "hidden", flexShrink: 0, background: "#0f172a" }}>
           <div style={{ padding: "8px 15px", borderBottom: "1px solid #1e293b", background: "#0f172a", flexShrink: 0 }}>
             <span style={{ fontSize: 10, fontWeight: 800, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.07em" }}>📤 Submission Portal</span>
           </div>

@@ -188,12 +188,17 @@ export default function TeacherGradingDashboard({ material, courseId, courseUuid
         ))}
       </div>
 
-      {/* Submissions table */}
-      <div style={{ flex: 1, overflowY: "auto" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+      {/* Submissions table — 3-col layout to prevent horizontal scroll */}
+      <div style={{ flex: 1, overflowY: "auto", overflowX: "hidden" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, tableLayout: "fixed" }}>
+          <colgroup>
+            <col style={{ width: "44%" }} />
+            <col style={{ width: "22%" }} />
+            <col style={{ width: "34%" }} />
+          </colgroup>
           <thead style={{ position: "sticky", top: 0, zIndex: 1 }}>
             <tr style={{ background: "#1e293b" }}>
-              {["Student", "Status", "Submitted At", "Grade", "Action"].map(h => (
+              {["Student", "Status", "Grade / Action"].map(h => (
                 <th key={h} style={{ padding: "8px 10px", textAlign: "left", fontWeight: 700, fontSize: 9, letterSpacing: "0.07em", textTransform: "uppercase", color: "#94a3b8", whiteSpace: "nowrap" }}>{h}</th>
               ))}
             </tr>
@@ -201,36 +206,40 @@ export default function TeacherGradingDashboard({ material, courseId, courseUuid
           <tbody>
             {displayRoster.map((row) => (
               <tr key={row.studentId} className="sub-row" style={{ borderBottom: "1px solid #1e293b" }}>
+                {/* Student — name + ID + submitted date stacked */}
                 <td style={{ padding: "8px 10px" }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-                    <div style={{ width: 24, height: 24, borderRadius: "50%", background: "rgba(99,102,241,.15)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 800, color: "#6366f1", flexShrink: 0 }}>
+                    <div style={{ width: 26, height: 26, borderRadius: "50%", background: "rgba(99,102,241,.18)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800, color: "#818cf8", flexShrink: 0 }}>
                       {row.studentName?.charAt(0)}
                     </div>
-                    <div>
-                      <div style={{ fontSize: 12, fontWeight: 700, color: "#e2e8f0" }}>{row.studentName}</div>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: "#e2e8f0", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{row.studentName}</div>
                       <div style={{ fontSize: 10, color: "#94a3b8" }}>{row.studentId}</div>
+                      {row.submittedAt && (
+                        <div style={{ fontSize: 10, color: "#64748b", marginTop: 1 }}>{fmtDate(row.submittedAt)}</div>
+                      )}
                     </div>
                   </div>
                 </td>
+                {/* Status badge */}
                 <td style={{ padding: "8px 10px" }}>
                   <Badge color={subColor[row.status] || "default"}>{row.status}</Badge>
                 </td>
-                <td style={{ padding: "8px 10px", color: "#64748b", fontSize: 11 }}>
-                  {fmtDate(row.submittedAt)}
-                </td>
+                {/* Grade + action combined */}
                 <td style={{ padding: "8px 10px" }}>
-                  {row.grade != null
-                    ? <span style={{ fontWeight: 900, fontSize: 14, color: gradeColor(row.grade) }}>{row.grade}%</span>
-                    : <span style={{ color: "#94a3b8", fontSize: 11 }}>—</span>
-                  }
-                </td>
-                <td style={{ padding: "8px 10px" }}>
-                  {row.status !== "Pending"
-                    ? <Btn size="sm" variant={row.grade != null ? "success" : "primary"} onClick={() => setModalSub(row)}>
+                  {row.status !== "Pending" ? (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                      {row.grade != null && (
+                        <span style={{ fontWeight: 900, fontSize: 14, color: gradeColor(row.grade) }}>{row.grade}%</span>
+                      )}
+                      <Btn size="sm" variant={row.grade != null ? "success" : "primary"} onClick={() => setModalSub(row)}
+                        style={{ fontSize: 11, padding: "3px 8px" }}>
                         {row.grade != null ? "✏ Edit" : "📝 Grade"}
                       </Btn>
-                    : <span style={{ fontSize: 11, color: "#cbd5e1" }}>Awaiting</span>
-                  }
+                    </div>
+                  ) : (
+                    <span style={{ fontSize: 11, color: "#475569", fontStyle: "italic" }}>Awaiting</span>
+                  )}
                 </td>
               </tr>
             ))}

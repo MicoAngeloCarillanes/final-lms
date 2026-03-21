@@ -145,7 +145,7 @@ export default function SubmissionPortal({ material, user, existingSubmission, o
           [dueDate && new Date() <= dueDate,    "Submitted before due date"],
           [submitted,                           "Confirmation received"],
         ].map(([done, lbl], i) => (
-          <div key={i} style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 4, fontSize: 11, color: done ? "#065f46" : "#94a3b8" }}>
+          <div key={i} style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 4, fontSize: 11, color: done ? "#34d399" : "#64748b" }}>
             <span style={{ fontSize: 12 }}>{done ? "✅" : "○"}</span> {lbl}
           </div>
         ))}
@@ -171,7 +171,7 @@ export default function SubmissionPortal({ material, user, existingSubmission, o
             </div>
           </div>
           {existingSubmission.feedback && (
-            <div style={{ background: "rgba(255,255,255,.7)", borderRadius: 7, padding: "9px 11px", fontSize: 12, color: "#cbd5e1", lineHeight: 1.55 }}>
+            <div style={{ background: "rgba(255,255,255,.7)", borderRadius: 7, padding: "9px 11px", fontSize: 12, color: "#334155", lineHeight: 1.55 }}>
               <div style={{ fontSize: 9, fontWeight: 800, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 4 }}>Teacher's Feedback</div>
               {existingSubmission.feedback}
             </div>
