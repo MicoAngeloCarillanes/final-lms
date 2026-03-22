@@ -87,10 +87,10 @@ export default function StudentProfile({ user, onUpdateUser }) {
           </Card>
           <Card>
             <div style={{ fontSize: 11, fontWeight: 800, color: "#94a3b8", marginBottom: 8 }}>Academic Info</div>
-            {[["Year Level", user.yearLevel], ["Semester", user.semester]].map(([l, v]) => v && (
+            {[["Program", user.programName], ["Year Level", user.yearLevel], ["Semester", user.semester]].map(([l, v]) => (
               <div key={l} style={{ marginBottom: 8 }}>
                 <div style={{ fontSize: 9, fontWeight: 700, color: "#475569", textTransform: "uppercase", letterSpacing: "0.07em" }}>{l}</div>
-                <div style={{ fontSize: 12, color: "#cbd5e1", marginTop: 2 }}>{v}</div>
+                <div style={{ fontSize: 12, color: v ? "#cbd5e1" : "#475569", marginTop: 2 }}>{v || "—"}</div>
               </div>
             ))}
           </Card>

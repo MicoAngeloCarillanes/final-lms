@@ -265,6 +265,8 @@ export default function AdminSubAccounts({ user }) {
   const [activeFilter, setActiveFilter] = useState("all");
   const [editTarget,   setEditTarget]   = useState(null);
   const [pwTarget,     setPwTarget]     = useState(null);
+  const [selIds,       setSelIds]       = useState(new Set());  // selected approval ids
+  const [bulkBusy,     setBulkBusy]     = useState(false);
 
   const showToast = (m) => { setToast(m); setTimeout(() => setToast(""), 2800); };
   const upd = (f, v) => setForm(p => ({ ...p, [f]: v }));
@@ -324,39 +326,103 @@ export default function AdminSubAccounts({ user }) {
   const review = async (id, status) => {
     setBusy(true);
     try {
-      const updated = await approvalApi.review(id, status, user._uuid);
+      const a = approvals.find(x => x.id === id);
 
-      if (status === "approved") {
-        const a = approvals.find(x => x.id === id);
-        if (a) {
-          const { data: newUser, error: uErr } = await supabase.from("users").insert({
-            display_id:    `${a.role === "student" ? "STU" : "TCH"}-${Date.now()}`,
-            username:      a.username,
-            full_name:     a.full_name,
-            email:         a.email || null,
-            password_hash: a.password_hash,
-            civil_status:  a.civil_status || null,
-            birthdate:     a.birthdate || null,
-            address:       a.address || null,
-            role:          a.role,
-            is_active:     true,
-          }).select().single();
+      // Guard: never re-process an already-reviewed request
+      if (a?.status !== "pending") {
+        showToast("This request has already been reviewed."); setBusy(false); return;
+      }
 
-          if (!uErr && newUser) {
-            if (a.role === "student") {
-              await supabase.from("students").insert({ user_id: newUser.user_id, year_level: a.year_level, semester: a.semester });
-            } else {
-              await supabase.from("teachers").insert({ user_id: newUser.user_id });
-            }
-          }
+      if (status === "approved" && a) {
+        // Pre-check: username must not already exist in users table.
+        // Do this BEFORE marking the approval as reviewed so the record
+        // stays pending and can be corrected/retried if there's a conflict.
+        const { data: existing } = await supabase
+          .from("users").select("user_id").eq("username", a.username).maybeSingle();
+        if (existing) {
+          showToast(`❌ Username "${a.username}" already exists. Cannot approve duplicate.`);
+          setBusy(false); return;
+        }
+
+        // Generate a sequential display_id (STU001 style) — same as AdminAccounts
+        const prefix = a.role === "student" ? "STU" : "TCH";
+        const { data: maxRow } = await supabase.from("users")
+          .select("display_id").eq("role", a.role)
+          .order("display_id", { ascending: false }).limit(1).maybeSingle();
+        const lastNum   = maxRow ? parseInt(maxRow.display_id.replace(/\D/g, ""), 10) : 0;
+        const nextNum   = (isNaN(lastNum) ? 0 : lastNum) + 1;
+        const displayId = `${prefix}${String(nextNum).padStart(3, "0")}`;
+
+        const { data: newUser, error: uErr } = await supabase.from("users").insert({
+          display_id:    displayId,
+          username:      a.username,
+          full_name:     a.full_name,
+          email:         a.email || null,
+          password_hash: a.password_hash,
+          civil_status:  a.civil_status || null,
+          birthdate:     a.birthdate || null,
+          address:       a.address || null,
+          role:          a.role,
+          is_active:     true,
+        }).select().single();
+
+        if (uErr) throw new Error("Failed to create user account: " + uErr.message);
+
+        if (a.role === "student") {
+          const { error: stuErr } = await supabase.from("students").insert({
+            user_id:    newUser.user_id,
+            year_level: a.year_level  || null,
+            semester:   a.semester    || null,
+            program_id: a.program_id  || null,
+          });
+          if (stuErr) throw new Error("User created but student profile failed: " + stuErr.message);
+        } else {
+          await supabase.from("teachers").insert({ user_id: newUser.user_id });
         }
       }
 
-      setApprovals(prev => prev.map(a => a.id === id ? updated : a));
+      // Mark the approval record AFTER user creation succeeds so the record
+      // stays "pending" and retryable if anything above throws.
+      const updated = await approvalApi.review(id, status, user._uuid);
+      setApprovals(prev => prev.map(x => x.id === id ? updated : x));
       setSelApproval(null);
       showToast(status === "approved" ? "✅ Account approved & created!" : "❌ Request rejected.");
     } catch (err) { showToast("Error: " + err.message); }
     setBusy(false);
+  };
+
+  // ── Selection helpers ─────────────────────────────────────────────────────
+  const toggleSel = (id) => setSelIds(prev => {
+    const next = new Set(prev);
+    next.has(id) ? next.delete(id) : next.add(id);
+    return next;
+  });
+
+  const clearSel = () => setSelIds(new Set());
+
+  const selectAllPending = () => {
+    const pendingIds = filteredApprovals.filter(a => a.status === "pending").map(a => a.id);
+    setSelIds(new Set(pendingIds));
+  };
+
+  // ── Bulk approve / reject ─────────────────────────────────────────────────
+  const bulkReview = async (status) => {
+    const ids = [...selIds].filter(id => approvals.find(a => a.id === id)?.status === "pending");
+    if (!ids.length) return;
+    setBulkBusy(true);
+    let done = 0, failed = 0;
+    for (const id of ids) {
+      try {
+        await review(id, status);  // reuse existing single-review logic (handles user creation)
+        done++;
+      } catch { failed++; }
+    }
+    clearSel();
+    setBulkBusy(false);
+    showToast(failed > 0
+      ? `Done with ${failed} error(s). ${done} ${status}.`
+      : `✅ ${done} request${done !== 1 ? "s" : ""} ${status}.`
+    );
   };
 
   const setActive = async (id, isActive) => {
@@ -397,6 +463,16 @@ export default function AdminSubAccounts({ user }) {
   ];
 
   const approvalCols = [
+    { field: "id", header: "", width: 40, sortable: false,
+      cellRenderer: (v, row) => row.status !== "pending" ? null : (
+        <input type="checkbox"
+          checked={selIds.has(v)}
+          onChange={e => { e.stopPropagation(); toggleSel(v); }}
+          onClick={e => e.stopPropagation()}
+          style={{ cursor: "pointer", accentColor: "#6366f1", width: 14, height: 14 }}
+        />
+      ),
+    },
     { field: "full_name",      header: "Full Name" },
     { field: "username",       header: "Username",     width: 110 },
     { field: "role",           header: "Role",         width: 80,
@@ -533,15 +609,44 @@ export default function AdminSubAccounts({ user }) {
       {tab === "approvals" && (
         <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
           <div style={{ flex: 1, padding: "14px 18px", display: "flex", flexDirection: "column", overflow: "hidden", background: "#0f172a", gap: 10 }}>
-            <div style={{ display: "flex", gap: 8, alignItems: "center", flexShrink: 0 }}>
-              {["all", "pending", "approved", "rejected"].map(s => (
-                <button key={s} onClick={() => setActiveFilter(s)}
-                  style={{ padding: "4px 12px", borderRadius: 9999, fontFamily: "inherit", fontSize: 12, fontWeight: 700, cursor: "pointer", transition: "all .15s", border: activeFilter === s ? "1px solid #6366f1" : "1px solid #334155", background: activeFilter === s ? "#4f46e5" : "transparent", color: activeFilter === s ? "#fff" : "#64748b" }}>
-                  {s.charAt(0).toUpperCase()+s.slice(1)}{s === "pending" && pendingCount > 0 ? ` (${pendingCount})` : ""}
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexShrink: 0, flexWrap: "wrap" }}>
+              {/* Status filter pills */}
+              <div style={{ display: "flex", gap: 6 }}>
+                {["all", "pending", "approved", "rejected"].map(s => (
+                  <button key={s} onClick={() => { setActiveFilter(s); clearSel(); }}
+                    style={{ padding: "4px 12px", borderRadius: 9999, fontFamily: "inherit", fontSize: 12, fontWeight: 700, cursor: "pointer", transition: "all .15s", border: activeFilter === s ? "1px solid #6366f1" : "1px solid #334155", background: activeFilter === s ? "#4f46e5" : "transparent", color: activeFilter === s ? "#fff" : "#64748b" }}>
+                    {s.charAt(0).toUpperCase()+s.slice(1)}{s === "pending" && pendingCount > 0 ? ` (${pendingCount})` : ""}
+                  </button>
+                ))}
+                <span style={{ fontSize: 12, color: "#475569", alignSelf: "center", marginLeft: 4 }}>{filteredApprovals.length} record{filteredApprovals.length !== 1 ? "s" : ""}</span>
+              </div>
+
+              {/* Select All Pending shortcut */}
+              {pendingCount > 0 && (
+                <button onClick={selIds.size > 0 ? clearSel : selectAllPending}
+                  style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #334155", background: "transparent", color: "#64748b", fontSize: 12, fontFamily: "inherit", cursor: "pointer" }}>
+                  {selIds.size > 0 ? `✕ Deselect (${selIds.size})` : `☐ Select All Pending (${pendingCount})`}
                 </button>
-              ))}
-              <span style={{ fontSize: 12, color: "#475569", marginLeft: 4 }}>{filteredApprovals.length} record{filteredApprovals.length !== 1 ? "s" : ""}</span>
+              )}
             </div>
+
+            {/* Bulk action toolbar — only visible when items selected */}
+            {selIds.size > 0 && (
+              <div style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 10, background: "rgba(99,102,241,.1)", border: "1px solid rgba(99,102,241,.25)", borderRadius: 8, padding: "10px 14px" }}>
+                <span style={{ fontSize: 13, fontWeight: 700, color: "#a5b4fc", flex: 1 }}>
+                  {selIds.size} request{selIds.size !== 1 ? "s" : ""} selected
+                </span>
+                <Btn onClick={() => bulkReview("approved")} disabled={bulkBusy}
+                  style={{ background: "rgba(16,185,129,.2)", color: "#34d399", border: "1px solid rgba(16,185,129,.3)" }}>
+                  {bulkBusy ? "⏳ Processing…" : `✅ Approve All (${selIds.size})`}
+                </Btn>
+                <Btn onClick={() => bulkReview("rejected")} disabled={bulkBusy} variant="danger">
+                  {bulkBusy ? "⏳ Processing…" : `❌ Reject All (${selIds.size})`}
+                </Btn>
+                <button onClick={clearSel}
+                  style={{ background: "none", border: "none", color: "#475569", fontSize: 16, cursor: "pointer", padding: "0 4px" }}>×</button>
+              </div>
+            )}
             <div style={{ flex: 1, overflow: "hidden" }}>
               <LMSGrid columns={approvalCols} rowData={filteredApprovals} onRowClick={setSelApproval} selectedId={selApproval?.id} height="100%" />
             </div>
@@ -567,6 +672,7 @@ export default function AdminSubAccounts({ user }) {
                   ["Submitted By", selApproval.submitter_name],
                   ["Civil Status", selApproval.civil_status],
                   ["Birthdate",    selApproval.birthdate],
+                  ["Program",      selApproval.program_name || (selApproval.program_id ? `ID: ${selApproval.program_id}` : "—")],
                   ["Year Level",   selApproval.year_level],
                   ["Semester",     selApproval.semester],
                   ["Address",      selApproval.address],

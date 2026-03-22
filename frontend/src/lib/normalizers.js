@@ -15,8 +15,10 @@ export const normalizeUser = (row) => ({
   address:       row.address      || "",
   password:      "",
   ...(row.students?.[0] && {
-    yearLevel: row.students[0].year_level,
-    semester:  row.students[0].semester,
+    yearLevel:   row.students[0].year_level,
+    semester:    row.students[0].semester,
+    programId:   row.students[0].program_id   || null,
+    programName: row.students[0].program?.name || null,
   }),
 });
 

@@ -7,7 +7,7 @@
  */
 import React, { useState, useEffect } from "react";
 import { supabase } from "../../supabaseClient";
-import { approvalApi } from "../../lib/api";
+import { approvalApi, programApi } from "../../lib/api";
 import { Badge, Btn, Input, Sel, FF, Toast } from "../../components/ui";
 import TopBar from "../../components/TopBar";
 import LMSGrid from "../../components/LMSGrid";
@@ -16,6 +16,7 @@ const emptyForm = {
   role: "student", full_name: "", username: "", email: "",
   civil_status: "Single", birthdate: "", address: "",
   year_level: "1st Year", semester: "1st Semester", password: "",
+  program_id: "",
 };
 
 export default function SubAdminAccountRequests({ user }) {
@@ -25,6 +26,13 @@ export default function SubAdminAccountRequests({ user }) {
   const [busy,     setBusy]     = useState(false);
   const [toast,    setToast]    = useState("");
   const [history,  setHistory]  = useState([]);
+  const [programOpts, setProgramOpts] = useState([]);
+
+  useEffect(() => {
+    programApi.getOptions()
+      .then(opts => setProgramOpts(opts ?? []))
+      .catch(console.error);
+  }, []);
 
   const showToast = (m) => { setToast(m); setTimeout(() => setToast(""), 3000); };
   const upd = (f, v) => setForm(p => ({ ...p, [f]: v }));
@@ -68,8 +76,10 @@ export default function SubAdminAccountRequests({ user }) {
         civil_status:   form.civil_status || null,
         birthdate:      form.birthdate    || null,
         address:        form.address.trim() || null,
-        year_level:     form.role === "student" ? form.year_level : null,
-        semester:       form.role === "student" ? form.semester   : null,
+        year_level:     form.role === "student" ? form.year_level  : null,
+        semester:       form.role === "student" ? form.semester    : null,
+        program_id:     form.role === "student" ? (form.program_id ? Number(form.program_id) : null) : null,
+        program_name:   form.role === "student" ? (programOpts.find(p => String(p.programId) === form.program_id)?.name || null) : null,
         password_hash:  hash,
       };
 
@@ -172,17 +182,27 @@ export default function SubAdminAccountRequests({ user }) {
             </FF>
 
             {form.role === "student" && (
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                <FF label="Year Level">
-                  <Sel value={form.year_level} onChange={e => upd("year_level", e.target.value)}>
-                    {["1st Year","2nd Year","3rd Year","4th Year"].map(y => <option key={y}>{y}</option>)}
+              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                <FF label="Program">
+                  <Sel value={form.program_id} onChange={e => upd("program_id", e.target.value)}>
+                    <option value="">— No Program —</option>
+                    {programOpts.map(p => (
+                      <option key={p.programId} value={p.programId}>{p.code} — {p.name}</option>
+                    ))}
                   </Sel>
                 </FF>
-                <FF label="Semester">
-                  <Sel value={form.semester} onChange={e => upd("semester", e.target.value)}>
-                    {["1st Semester","2nd Semester","Summer"].map(s => <option key={s}>{s}</option>)}
-                  </Sel>
-                </FF>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                  <FF label="Year Level">
+                    <Sel value={form.year_level} onChange={e => upd("year_level", e.target.value)}>
+                      {["1st Year","2nd Year","3rd Year","4th Year"].map(y => <option key={y}>{y}</option>)}
+                    </Sel>
+                  </FF>
+                  <FF label="Semester">
+                    <Sel value={form.semester} onChange={e => upd("semester", e.target.value)}>
+                      {["1st Semester","2nd Semester","Summer"].map(s => <option key={s}>{s}</option>)}
+                    </Sel>
+                  </FF>
+                </div>
               </div>
             )}
 

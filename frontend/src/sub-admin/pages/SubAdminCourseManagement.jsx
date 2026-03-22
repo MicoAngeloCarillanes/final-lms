@@ -130,25 +130,62 @@ export default function SubAdminCourseManagement({ user, users = [] }) {
   const loadCourses = useCallback(async (programId) => {
     setLoading(true);
     try {
+      // 1. Fetch courses only (no embedded joins — avoids silent RLS failures)
       const { data, error } = await supabase
         .from("courses")
-        .select(`
-          course_id, course_code, course_name, units, status, is_active, program_id,
-          schedules ( schedule_id, schedule_label, year_level, semester ),
-          teacher_course_assignments ( assignment_id, teacher_id, assigned_at )
-        `)
+        .select("course_id, course_code, course_name, units, status, is_active, program_id")
         .eq("program_id", programId)
         .eq("is_active", true)
         .order("course_code");
       if (error) throw new Error(error.message);
 
+      const courseIds = (data ?? []).map(c => c.course_id);
+
+      // 2. Fetch schedules separately
+      let schMap = {};  // course_id → schedule row
+      if (courseIds.length) {
+        const { data: schData } = await supabase
+          .from("schedules")
+          .select("schedule_id, course_id, schedule_label, year_level, semester, academic_year, room")
+          .in("course_id", courseIds);
+        (schData ?? []).forEach(row => { schMap[row.course_id] = row; });
+      }
+
+      // 3. Fetch teacher assignments separately with explicit ORDER so latest wins
+      let tcaMap = {};
+      let asgMap = {};
+      if (courseIds.length) {
+        const { data: tcaData } = await supabase
+          .from("teacher_course_assignments")
+          .select("assignment_id, course_id, teacher_id, assigned_at")
+          .in("course_id", courseIds)
+          .order("assigned_at", { ascending: false });
+
+        (tcaData ?? []).forEach(row => {
+          if (!tcaMap[row.course_id]) {
+            tcaMap[row.course_id] = row.teacher_id;
+            asgMap[row.course_id] = row.assignment_id;
+          }
+        });
+      }
+
+      // 4. Resolve teacher names directly from DB
+      const teacherIds = [...new Set(Object.values(tcaMap).filter(Boolean))];
+      let teacherNameMap = {};
+      if (teacherIds.length) {
+        const { data: tUsers } = await supabase
+          .from("users")
+          .select("user_id, full_name")
+          .in("user_id", teacherIds);
+        (tUsers ?? []).forEach(u => { teacherNameMap[u.user_id] = u.full_name; });
+      }
+
       const enriched = (data ?? []).map(c => {
-        const sch    = c.schedules?.[0];
-        const tca    = c.teacher_course_assignments?.[0];
-        const teacher = tca?.teacher_id ? users.find(u => u._uuid === tca.teacher_id) : null;
+        const sch = schMap[c.course_id] ?? null;
+        const tId = tcaMap[c.course_id] ?? null;
         return {
           _uuid:         c.course_id,
-          _assignmentId: tca?.assignment_id || null,   // PK — used for safe UPDATE
+          _assignmentId: asgMap[c.course_id] || null,
           id:            c.course_code,
           code:          c.course_code,
           name:          c.course_name,
@@ -158,8 +195,9 @@ export default function SubAdminCourseManagement({ user, users = [] }) {
           schedule:      sch?.schedule_label || "",
           yearLevel:     sch?.year_level     || "",
           semester:      sch?.semester       || "",
-          teacherId:     tca?.teacher_id     || null,
-          teacherName:   teacher?.fullName   || "Unassigned",
+          room:          sch?.room           || "",
+          teacherId:     tId,
+          teacherName:   tId ? (teacherNameMap[tId] || "Unassigned") : "Unassigned",
         };
       });
       setCourses(enriched);
@@ -187,7 +225,7 @@ export default function SubAdminCourseManagement({ user, users = [] }) {
       }
     } catch (e) { showToast(e.message, "error"); }
     setLoading(false);
-  }, [users]);
+  }, []);  // no longer depends on the users prop — teacher names are fetched directly
 
   const drillProg = async (prog) => {
     setSelProg(prog); setSelCourse(null); setTeacherSel([]); setSelStudents([]);
@@ -345,6 +383,7 @@ export default function SubAdminCourseManagement({ user, users = [] }) {
     { field: "name",        header: "Course" },
     { field: "teacherName", header: "Teacher",  width: 160 },
     { field: "schedule",    header: "Schedule", width: 150 },
+    { field: "room",        header: "Room",     width: 100 },
     { field: "units",       header: "Units",    width: 55 },
     { field: "yearLevel",   header: "Year",     width: 80 },
     { field: "semester",    header: "Semester", width: 110 },

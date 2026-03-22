@@ -36,7 +36,7 @@ const PaneHeader = ({ title, sub }) => (
 
 const emptyDept   = { code: "", name: "", room: "", email: "", phone: "", description: "" };
 const emptyProg   = { code: "", name: "", description: "" };
-const emptyCourse = { code: "", name: "", units: "3", schedule: "", yearLevel: "1st Year", semester: "1st Semester" };
+const emptyCourse = { code: "", name: "", units: "3", schedule: "", yearLevel: "1st Year", semester: "1st Semester", room: "" };
 
 // ─── Delete confirm modal ─────────────────────────────────────────────────────
 function ConfirmModal({ title, message, onConfirm, onCancel }) {
@@ -115,22 +115,27 @@ export default function AdminCourseManagement({ courses, setCourses, users, enro
   const loadCourses = useCallback(async (programId) => {
     setLoading(true);
     try {
-      // Fetch courses + schedules in one query
+      // 1. Fetch courses (no embedded joins — avoids silent RLS failures on joined tables)
       const { data: courseData, error: courseErr } = await supabase
         .from("courses")
-        .select(`
-          course_id, course_code, course_name, units, status, is_active, program_id,
-          schedules ( schedule_id, schedule_label, year_level, semester )
-        `)
+        .select("course_id, course_code, course_name, units, status, is_active, program_id")
         .eq("program_id", programId)
         .eq("is_active", true);
       if (courseErr) throw new Error(courseErr.message);
 
       const courseIds = (courseData ?? []).map(c => c.course_id);
 
-      // Fetch teacher assignments separately with explicit ORDER so latest wins.
-      // Supabase embedded select ordering does NOT sort nested arrays —
-      // only a top-level query guarantees the correct ORDER BY.
+      // 2. Fetch schedules separately (embedded joins can silently return null under RLS)
+      let schMap = {};  // course_id → schedule row
+      if (courseIds.length) {
+        const { data: schData } = await supabase
+          .from("schedules")
+          .select("schedule_id, course_id, schedule_label, year_level, semester, academic_year, room")
+          .in("course_id", courseIds);
+        (schData ?? []).forEach(row => { schMap[row.course_id] = row; });
+      }
+
+      // 3. Fetch teacher assignments separately with explicit ORDER so latest wins.
       let tcaMap = {};
       if (courseIds.length) {
         const { data: tcaData } = await supabase
@@ -138,15 +143,13 @@ export default function AdminCourseManagement({ courses, setCourses, users, enro
           .select("course_id, teacher_id, assigned_at")
           .in("course_id", courseIds)
           .order("assigned_at", { ascending: false });
-
-        // Keep only the LATEST assignment per course (first row after ORDER BY DESC)
         (tcaData ?? []).forEach(row => {
           if (!tcaMap[row.course_id]) tcaMap[row.course_id] = row.teacher_id;
         });
       }
 
       const enriched = (courseData ?? []).map(c => {
-        const sch     = c.schedules?.[0];
+        const sch     = schMap[c.course_id] ?? null;
         const tId     = tcaMap[c.course_id] ?? null;
         const teacher = tId ? users.find(u => u._uuid === tId) : null;
         return {
@@ -157,12 +160,13 @@ export default function AdminCourseManagement({ courses, setCourses, users, enro
           units:       c.units,
           status:      c.status || "Ongoing",
           programId:   c.program_id,
-          schedule:    sch?.schedule_label  || "",
-          yearLevel:   sch?.year_level      || "",
-          semester:    sch?.semester        || "",
-          _scheduleId: sch?.schedule_id     || null,
+          schedule:    sch?.schedule_label || "",
+          yearLevel:   sch?.year_level     || "",
+          semester:    sch?.semester       || "",
+          room:        sch?.room           || "",
+          _scheduleId: sch?.schedule_id    || null,
           teacherId:   tId,
-          teacherName: teacher?.fullName    || "Unassigned",
+          teacherName: teacher?.fullName   || "Unassigned",
         };
       });
       setProgCourses(enriched);
@@ -285,18 +289,19 @@ export default function AdminCourseManagement({ courses, setCourses, users, enro
           units:       parseInt(courseForm.units) || 3,
         }).eq("course_id", editingId);
 
-        // Update or insert schedule using RPC (handles USER-DEFINED enum casting)
-        const editing = progCourses.find(c => c._uuid === editingId);
-        await supabase.rpc("upsert_course_schedule", {
-          p_course_id:      editingId,
-          p_schedule_label: courseForm.schedule,
-          p_academic_year:  "2025-2026",
-          p_semester:       courseForm.semester  || null,
-          p_year_level:     courseForm.yearLevel || null,
-        });
+        // Upsert the schedule row — insert if none exists for this course_id,
+        // update in place if one does. Only columns that exist on the schedules table.
+        await supabase.from("schedules").upsert({
+          course_id:      editingId,
+          schedule_label: courseForm.schedule  || null,
+          year_level:     courseForm.yearLevel || null,
+          semester:       courseForm.semester  || null,
+          academic_year:  "2025-2026",
+          room:           courseForm.room      || null,
+        }, { onConflict: "course_id" });
 
         setProgCourses(prev => prev.map(c => c._uuid === editingId
-          ? { ...c, code: courseForm.code.trim().toUpperCase(), name: courseForm.name.trim(), units: parseInt(courseForm.units) || 3, schedule: courseForm.schedule, yearLevel: courseForm.yearLevel, semester: courseForm.semester }
+          ? { ...c, code: courseForm.code.trim().toUpperCase(), name: courseForm.name.trim(), units: parseInt(courseForm.units) || 3, schedule: courseForm.schedule, yearLevel: courseForm.yearLevel, semester: courseForm.semester, room: courseForm.room }
           : c
         ));
         showToast("Course updated.");
@@ -313,14 +318,19 @@ export default function AdminCourseManagement({ courses, setCourses, users, enro
 
         let scheduleId = null;
         if (courseForm.schedule.trim()) {
-          const { data: sid, error: schErr } = await supabase.rpc("upsert_course_schedule", {
-            p_course_id:      newCourse.course_id,
-            p_schedule_label: courseForm.schedule.trim(),
-            p_academic_year:  "2025-2026",
-            p_semester:       courseForm.semester  || null,
-            p_year_level:     courseForm.yearLevel || null,
-          });
-          if (!schErr) scheduleId = sid;
+          const { data: schRow, error: schErr } = await supabase
+            .from("schedules")
+            .upsert({
+              course_id:      newCourse.course_id,
+              schedule_label: courseForm.schedule.trim(),
+              year_level:     courseForm.yearLevel || null,
+              semester:       courseForm.semester  || null,
+              academic_year:  "2025-2026",
+              room:           courseForm.room      || null,
+            }, { onConflict: "course_id" })
+            .select("schedule_id")
+            .single();
+          if (!schErr && schRow) scheduleId = schRow.schedule_id;
         }
 
         const newRow = {
@@ -334,6 +344,7 @@ export default function AdminCourseManagement({ courses, setCourses, users, enro
           schedule:    courseForm.schedule,
           yearLevel:   courseForm.yearLevel,
           semester:    courseForm.semester,
+          room:        courseForm.room,
           _scheduleId: scheduleId,
           teacherId:   null,
           teacherName: "Unassigned",
@@ -398,13 +409,13 @@ export default function AdminCourseManagement({ courses, setCourses, users, enro
       showToast("Student already enrolled.", "error"); return;
     }
     try {
-      // Atomic RPC — INSERT ... ON CONFLICT DO UPDATE
-      const { error } = await supabase.rpc("enroll_student", {
-        p_student_id:    student._uuid,
-        p_course_id:     selCourse._uuid,
-        p_academic_year: "2025-2026",
-        p_semester:      selCourse.semester || null,
-      });
+      const { error } = await supabase.from("student_course_assignments").upsert({
+        student_id:        student._uuid,
+        course_id:         selCourse._uuid,
+        enrollment_status: "Enrolled",
+        academic_year:     "2025-2026",
+        semester:          selCourse.semester || null,
+      }, { onConflict: "student_id,course_id" });
       if (error) throw new Error(error.message);
 
       setEnrollments(prev => [...prev, {
@@ -509,13 +520,14 @@ export default function AdminCourseManagement({ courses, setCourses, users, enro
     { field: "name",        header: "Course" },
     { field: "teacherName", header: "Teacher", width: 160 },
     { field: "schedule",    header: "Schedule",width: 140 },
+    { field: "room",        header: "Room",    width: 100 },
     { field: "units",       header: "Units",   width: 55 },
     { field: "yearLevel",   header: "Year",    width: 80 },
     { field: "semester",    header: "Semester",width: 110 },
     { field: "_uuid", header: "Actions", width: 120, sortable: false,
       cellRenderer: (_, row) => (
         <div style={{ display: "flex", gap: 4 }} onClick={e => e.stopPropagation()}>
-          <Btn size="sm" variant="secondary" onClick={() => { setEditingId(row._uuid); setSelCourse(row); setCourseForm({ code: row.code, name: row.name, units: String(row.units || 3), schedule: row.schedule || "", yearLevel: row.yearLevel || "1st Year", semester: row.semester || "1st Semester" }); }}>✏️</Btn>
+          <Btn size="sm" variant="secondary" onClick={() => { setEditingId(row._uuid); setSelCourse(row); setCourseForm({ code: row.code, name: row.name, units: String(row.units || 3), schedule: row.schedule || "", yearLevel: row.yearLevel || "1st Year", semester: row.semester || "1st Semester", room: row.room || "" }); }}>✏️</Btn>
           <Btn size="sm" variant="danger"    onClick={() => setConfirmDel({ type: "course", item: row })}>🗑</Btn>
         </div>
       )},
@@ -687,6 +699,7 @@ export default function AdminCourseManagement({ courses, setCourses, users, enro
                 </Sel>
               </FF>
               <FF label="Schedule"><Input value={courseForm.schedule} onChange={e => setCourseForm(f => ({ ...f, schedule: e.target.value }))} placeholder="e.g. MWF 8:00–9:00 AM" /></FF>
+              <FF label="Room"><Input value={courseForm.room} onChange={e => setCourseForm(f => ({ ...f, room: e.target.value }))} placeholder="e.g. Room 301" /></FF>
               <div style={{ display: "flex", gap: 8 }}>
                 <Btn onClick={saveCourse} style={{ flex: 1 }}>{editingId ? "✓ Save" : "✦ Create"}</Btn>
                 {editingId && <Btn variant="secondary" onClick={() => { setEditingId(null); setCourseForm(emptyCourse); setSelCourse(null); }}>Cancel</Btn>}

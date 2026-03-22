@@ -13,6 +13,7 @@ import Dashboard             from "../components/Dashboard";
 import AdminOverview         from "./pages/AdminOverview";
 import AdminAccounts         from "./pages/AdminAccounts";
 import AdminCourseManagement from "./pages/AdminCourseManagement";
+import AdminBulkEnroll       from "./pages/AdminBulkEnroll";
 import AdminSubAccounts      from "./pages/AdminSubAccounts";
 import ChatPage              from "../components/ChatPage";
 import AdminTermSettings     from "./pages/AdminTermSettings";
@@ -23,23 +24,25 @@ export default function AdminDashboard({ user, onLogout, users, setUsers, course
   const studentTeacherCount = users.filter(u => u.role === "student" || u.role === "teacher").length;
 
   const nav = [
-    { id: "dashboard",  label: "Dashboard",        icon: "🏠", badge: null },
-    { id: "overview",   label: "Overview",          icon: "⬡",  badge: null },
-    { id: "sub-admins", label: "Sub-Admins",        icon: "🛡️", badge: null },
-    { id: "accounts",   label: "Accounts",          icon: "👥", badge: studentTeacherCount },
-    { id: "courses",    label: "Course Management", icon: "📚", badge: courses.length },
-    { id: "terms",      label: "Term Settings",      icon: "📅", badge: null },
-    { id: "chat",       label: "Chat",              icon: "💬", badge: null },
+    { id: "dashboard",    label: "Dashboard",        icon: "🏠", badge: null },
+    { id: "overview",     label: "Overview",          icon: "⬡",  badge: null },
+    { id: "sub-admins",   label: "Sub-Admins",        icon: "🛡️", badge: null },
+    { id: "accounts",     label: "Accounts",          icon: "👥", badge: studentTeacherCount },
+    { id: "courses",      label: "Course Management", icon: "📚", badge: courses.length },
+    { id: "bulk-enroll",  label: "Bulk Assign",       icon: "🎓", badge: null },
+    { id: "terms",        label: "Term Settings",      icon: "📅", badge: null },
+    { id: "chat",         label: "Chat",              icon: "💬", badge: null },
   ];
 
   const pages = {
-    "dashboard":  <Dashboard user={user} courses={courses} enrollments={enrollments} />,
-    "overview":   <AdminOverview users={users} courses={courses} enrollments={enrollments} />,
-    "sub-admins": <AdminSubAccounts user={user} />,
-    "accounts":   <AdminAccounts users={users} setUsers={setUsers} />,
-    "courses":    <AdminCourseManagement courses={courses} setCourses={setCourses} users={users} enrollments={enrollments} setEnrollments={setEnrollments} />,
-    "terms":      <AdminTermSettings user={user} />,
-    "chat":       <ChatPage user={user} />,
+    "dashboard":    <Dashboard user={user} courses={courses} enrollments={enrollments} />,
+    "overview":     <AdminOverview users={users} courses={courses} enrollments={enrollments} />,
+    "sub-admins":   <AdminSubAccounts user={user} />,
+    "accounts":     <AdminAccounts users={users} setUsers={setUsers} />,
+    "courses":      <AdminCourseManagement courses={courses} setCourses={setCourses} users={users} enrollments={enrollments} setEnrollments={setEnrollments} />,
+    "bulk-enroll":  <AdminBulkEnroll users={users} courses={courses} enrollments={enrollments} setEnrollments={setEnrollments} />,
+    "terms":        <AdminTermSettings user={user} />,
+    "chat":         <ChatPage user={user} />,
   };
 
   return (

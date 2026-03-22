@@ -17,6 +17,7 @@ import ChatPage                 from "../components/ChatPage";
 import SubAdminAccountRequests  from "./pages/SubAdminAccountRequests";
 import SubAdminPasswordReset    from "./pages/SubAdminPasswordReset";
 import SubAdminCourseManagement from "./pages/SubAdminCourseManagement";
+import SubAdminStudentAccounts  from "./pages/SubAdminStudentAccounts";
 import TopBar                   from "../components/TopBar";
 import { announcementApi, taskApi } from "../lib/api";
 import { Btn, Input, Toast } from "../components/ui";
@@ -329,6 +330,7 @@ export default function SubAdminDashboard({ user, onLogout, users }) {
   const deptNav = [
     { id:"dashboard",        label:"Dashboard",        icon:"🏠", badge:null },
     { id:"account-requests", label:"Account Requests", icon:"📥", badge:null },
+    { id:"student-accounts", label:"Student Accounts", icon:"🎓", badge:null },
     { id:"password-reset",   label:"Password Reset",   icon:"🔑", badge:null },
     { id:"courses",          label:"Course Management",icon:"📚", badge:null },
     { id:"chat",             label:"Chat",             icon:"💬", badge:null },
@@ -340,13 +342,14 @@ export default function SubAdminDashboard({ user, onLogout, users }) {
 
   const nav     = isDeptAdmin ? deptNav : generalNav;
   const allowed = isDeptAdmin
-    ? ["dashboard","account-requests","password-reset","courses","chat"]
+    ? ["dashboard","account-requests","student-accounts","password-reset","courses","chat"]
     : ["dashboard","chat"];
   const activePage = allowed.includes(page) ? page : "dashboard";
 
   const pages = {
     "dashboard":        <SubAdminHome user={user} scope={scope} scopeRef={scopeRef}/>,
     "account-requests": <SubAdminAccountRequests user={user}/>,
+    "student-accounts": <SubAdminStudentAccounts user={user} users={users}/>,
     "password-reset":   <SubAdminPasswordReset   user={user} users={users}/>,
     "courses":          <SubAdminCourseManagement user={user} users={users}/>,
     "chat":             <ChatPage user={user} courses={[]} enrollments={[]} />,

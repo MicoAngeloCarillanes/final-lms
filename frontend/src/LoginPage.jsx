@@ -41,12 +41,20 @@ export default function LoginPage({ onLogin }) {
       // 3. Fetch role subclass row
       let subData = null;
       if (userData.role === "student") {
-        const { data } = await supabase
-          .from("students").select("*").eq("user_id", userData.user_id).single();
-        subData = { students: data ? [data] : [] };
+        const { data: stuRow } = await supabase
+          .from("students").select("*").eq("user_id", userData.user_id).maybeSingle();
+        // Resolve program name separately (no embedded join to avoid RLS 400)
+        let program = null;
+        if (stuRow?.program_id) {
+          const { data: progRow } = await supabase
+            .from("program").select("program_id, code, name")
+            .eq("program_id", stuRow.program_id).maybeSingle();
+          program = progRow || null;
+        }
+        subData = { students: stuRow ? [{ ...stuRow, program }] : [] };
       } else if (userData.role === "teacher") {
         const { data } = await supabase
-          .from("teachers").select("*").eq("user_id", userData.user_id).single();
+          .from("teachers").select("*").eq("user_id", userData.user_id).maybeSingle();
         subData = { teachers: data ? [data] : [] };
       }
 

@@ -163,12 +163,13 @@ export default function AdminAccounts({ users, setUsers }) {
     }
 
     if (role === "student") {
-      await supabase.from("students").insert({
+      const { error: stuErr } = await supabase.from("students").insert({
         user_id:    newUserRow.user_id,
         year_level: form.yearLevel,
         semester:   form.semester,
         program_id: form.programId ? Number(form.programId) : null,
       });
+      if (stuErr) { showToast("User created but student profile failed: " + stuErr.message, "error"); return; }
     } else {
       await supabase.from("teachers").insert({ user_id: newUserRow.user_id });
     }
@@ -219,6 +220,7 @@ export default function AdminAccounts({ users, setUsers }) {
       await supabase.from("students").update({
         year_level: form.yearLevel,
         semester:   form.semester,
+        program_id: form.programId ? Number(form.programId) : null,
       }).eq("user_id", editTarget._uuid);
     }
 

@@ -31,13 +31,28 @@ export default function App() {
     async function loadUsers() {
       const [userRes, stuRes, tchRes] = await Promise.all([
         supabase.from("users").select("*").eq("is_active", true),
-        supabase.from("students").select("*"),
+        supabase.from("students").select("*"),   // no embedded join — avoids FK name / RLS issue
         supabase.from("teachers").select("*"),
       ]);
       if (!userRes.data) return;
+
+      // Fetch program names separately for any program_ids found on student rows
+      const programIds = [...new Set((stuRes.data || []).map(s => s.program_id).filter(Boolean))];
+      let programMap = {};  // program_id → { code, name }
+      if (programIds.length) {
+        const { data: progData, error: progErr } = await supabase
+          .from("program")
+          .select("program_id, code, name")
+          .in("program_id", programIds);
+        if (progErr) console.warn("Program lookup failed:", progErr.message);
+        (progData ?? []).forEach(p => { programMap[p.program_id] = p; });
+      }
+
       const stuMap = {};
       const tchMap = {};
-      (stuRes.data || []).forEach(s => { stuMap[s.user_id] = s; });
+      (stuRes.data || []).forEach(s => {
+        stuMap[s.user_id] = { ...s, program: programMap[s.program_id] || null };
+      });
       (tchRes.data || []).forEach(t => { tchMap[t.user_id] = t; });
       setUsers(userRes.data.map(u => normalizeUser({
         ...u,
@@ -51,34 +66,39 @@ export default function App() {
   // ── Load courses ───────────────────────────────────────────────────────────────────────────────────
   useEffect(() => {
     async function loadCourses() {
-      // Fetch courses + schedules (no teacher join here)
+      // 1. Fetch courses only (no embedded joins — avoids silent RLS failures)
       const { data: rawCourses, error } = await supabase
         .from("courses")
-        .select(`
-          course_id, course_code, course_name, units, status, program_id,
-          schedules ( schedule_id, schedule_label, year_level, semester )
-        `)
+        .select("course_id, course_code, course_name, units, status, program_id")
         .eq("is_active", true);
 
       if (error || !rawCourses) return;
 
-      // Fetch teacher assignments separately with explicit ORDER BY assigned_at DESC.
-      // Supabase embedded select does NOT sort nested arrays reliably — only a
-      // top-level query with .order() guarantees the latest assignment per course.
       const courseIds = rawCourses.map(c => c.course_id);
+
+      // 2. Fetch schedules separately
+      let schMap = {};  // course_id → schedule row
+      if (courseIds.length) {
+        const { data: schData } = await supabase
+          .from("schedules")
+          .select("schedule_id, course_id, schedule_label, year_level, semester, academic_year, room")
+          .in("course_id", courseIds);
+        (schData ?? []).forEach(row => { schMap[row.course_id] = row; });
+      }
+
+      // 3. Fetch teacher assignments separately with explicit ORDER BY assigned_at DESC
       const { data: tcaData } = await supabase
         .from("teacher_course_assignments")
         .select("course_id, teacher_id, assigned_at")
         .in("course_id", courseIds)
         .order("assigned_at", { ascending: false });
 
-      // Build map: course_id → latest teacher_id (first row after ORDER BY DESC)
       const tcaMap = {};
       (tcaData ?? []).forEach(row => {
         if (!tcaMap[row.course_id]) tcaMap[row.course_id] = row.teacher_id;
       });
 
-      // Bulk fetch all assigned teacher user records
+      // 4. Bulk fetch teacher user records
       const teacherIds = [...new Set(Object.values(tcaMap).filter(Boolean))];
       let teacherMap = {};
       if (teacherIds.length) {
@@ -90,7 +110,7 @@ export default function App() {
       }
 
       setCourses(rawCourses.map(c => {
-        const sch     = c.schedules?.[0] ?? null;
+        const sch     = schMap[c.course_id] ?? null;
         const tId     = tcaMap[c.course_id] ?? null;
         const teacher = tId ? teacherMap[tId] ?? null : null;
         return {
@@ -103,6 +123,7 @@ export default function App() {
           units:       c.units,
           yearLevel:   sch?.year_level     || "",
           semester:    sch?.semester       || "",
+          room:        sch?.room           || "",
           status:      c.status            || "Ongoing",
           programId:   c.program_id        ?? null,
           _uuid:       c.course_id,
