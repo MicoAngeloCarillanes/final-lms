@@ -8,16 +8,16 @@
  *    scope === "department" → full access (accounts, password reset, announcements, chat)
  *    any other scope       → restricted access (announcements + chat only)
  */
-import React, { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
 import "./App.css";
+import { normalizeUser } from "./lib/normalizers";
 import { supabase } from "./supabaseClient";
-import { normalizeUser, normalizeMaterial, normalizeExam } from "./lib/normalizers";
 
-import LoginPage         from "./LoginPage";
-import AdminDashboard    from "./admin/AdminDashboard";
+import LoginPage from "./LoginPage";
+import AdminDashboard from "./admin/AdminDashboard";
+import StudentDashboard from "./student/StudentDashboard";
 import SubAdminDashboard from "./sub-admin/SubAdminDashboard";
-import StudentDashboard  from "./student/StudentDashboard";
-import TeacherDashboard  from "./teacher/TeacherDashboard";
+import TeacherDashboard from "./teacher/TeacherDashboard";
 
 export default function App() {
   const [currentUser,     setCurrentUser]     = useState(null);

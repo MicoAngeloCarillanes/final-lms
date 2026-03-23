@@ -6,9 +6,9 @@
  *  - Added Sub-Admin demo quick-access button
  *  - Updated promo panel feature list to mention sub-admin role
  */
-import React, { useState } from "react";
-import { supabase } from "./supabaseClient";
+import { useState } from "react";
 import { normalizeUser } from "./lib/normalizers";
+import { supabase } from "./supabaseClient";
 
 export default function LoginPage({ onLogin }) {
   const [u,       setU]       = useState("");
@@ -65,6 +65,52 @@ export default function LoginPage({ onLogin }) {
     setLoading(false);
   };
 
+  const signIn = async (
+    email = 'test@gmail.com', 
+    password = 'password123'
+  ) => {
+  setErr(""); 
+  setLoading(true);
+
+  try {
+    // 1. Sign in with Supabase Auth (This handles password verification automatically)
+    const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+      email: email, // Supabase Auth typically uses email, not username, by default
+      password: password,
+    });
+
+    if (authError) {
+      setErr(authError.message);
+      setLoading(false);
+      return;
+    }
+
+    // 2. The user is now authenticated! 
+    // Now we fetch their extra profile data from your 'users' table using their UID
+    const { data: userData, error: userError } = await supabase
+      .from("users")
+      .select("*")
+      .eq("user_id", authData.user.id)
+      .maybeSingle(); // Returns null instead of an error if no row is found
+
+    if (userError || !userData) {
+      setErr("Profile not found.");
+      setLoading(false);
+      return;
+    }
+
+    // 3. Fetch role-specific data (Students/Teachers)
+    let subData = null;
+
+    onLogin(normalizeUser({ ...userData, ...subData }));
+
+  } catch (e) {
+    setErr("An unexpected error occurred.");
+  } finally {
+    setLoading(false);
+  }
+};
+
   const quick = [
     { label: "Admin",     icon: "🛡",  u: "admin",     p: "admin123", c: "#f59e0b" },
     { label: "Sub-Admin", icon: "🔐",  u: "sub_admin", p: "admin123", c: "#fb923c" },
@@ -116,7 +162,7 @@ export default function LoginPage({ onLogin }) {
             )}
 
             <button
-              onClick={() => doLogin()} disabled={loading}
+              onClick={() => signIn()} disabled={loading}
               style={{ background: "#4f46e5", color: "#fff", border: "none", borderRadius: 8, padding: "12px", fontSize: 14, fontWeight: 800, fontFamily: "inherit", cursor: "pointer", opacity: loading ? 0.7 : 1, transition: "opacity .15s", letterSpacing: "-0.01em", marginTop: 2 }}>
               {loading ? "Signing in…" : "Sign In →"}
             </button>

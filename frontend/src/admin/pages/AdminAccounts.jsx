@@ -17,12 +17,12 @@
  *   🔴/🟢 Deactivate / Reactivate from the left pane
  *   🔍 Filter grid by role
  */
-import React, { useState, useEffect } from "react";
-import { supabase } from "../../supabaseClient";
-import { programApi, userApi } from "../../lib/api";
-import { Badge, Btn, Input, Sel, FF, Toast } from "../../components/ui";
+import { useEffect, useState } from "react";
 import LMSGrid from "../../components/LMSGrid";
-import TopBar  from "../../components/TopBar";
+import TopBar from "../../components/TopBar";
+import { Badge, Btn, FF, Input, Sel } from "../../components/ui";
+import { programApi, userApi } from "../../lib/api";
+import { supabase } from "../../supabaseClient";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const CIVIL_STATUSES = ["Single", "Married", "Divorced", "Widowed"];
@@ -128,73 +128,75 @@ export default function AdminAccounts({ users, setUsers }) {
 
   // ── CREATE ─────────────────────────────────────────────────────────────────
   const handleCreate = async () => {
-    const e = validate(true);
-    if (Object.keys(e).length) { setErrors(e); return; }
+    const e = validate(false);
 
-    const { data: hashData, error: hashErr } = await supabase
-      .rpc("hash_password", { plain: form.password });
-    if (hashErr || !hashData) {
-      setErrors({ password: "Could not hash password." }); return;
+    if (Object.keys(e).length) {
+        setErrors(e);
+        return;
     }
 
-    const prefix = role === "student" ? "STU" : "TCH";
-    const { data: maxRow } = await supabase.from("users")
-      .select("display_id").eq("role", role)
-      .order("display_id", { ascending: false }).limit(1).maybeSingle();
-    const lastNum   = maxRow ? parseInt(maxRow.display_id.replace(/\D/g, ""), 10) : 0;
-    const nextNum   = (isNaN(lastNum) ? 0 : lastNum) + 1;
-    const displayId = `${prefix}${String(nextNum).padStart(3, "0")}`;
-
-    const { data: newUserRow, error: userErr } = await supabase.from("users").insert({
-      display_id:    displayId,
-      username:      form.username.trim(),
-      full_name:     form.fullName.trim(),
-      email:         form.email.trim() || null,
-      password_hash: hashData,
-      civil_status:  form.civilStatus || null,
-      birthdate:     form.birthdate   || null,
-      address:       form.address.trim() || null,
-      role,
-    }).select().single();
-
-    if (userErr) {
-      setErrors({ username: userErr.message.includes("username") ? "Username already taken" : userErr.message });
-      return;
+    if (!form.email.trim()) {
+        setErrors({
+            email: "Email is required for invite."
+        });
+        return;
     }
 
-    if (role === "student") {
-      const { error: stuErr } = await supabase.from("students").insert({
-        user_id:    newUserRow.user_id,
-        year_level: form.yearLevel,
-        semester:   form.semester,
-        program_id: form.programId ? Number(form.programId) : null,
-      });
-      if (stuErr) { showToast("User created but student profile failed: " + stuErr.message, "error"); return; }
-    } else {
-      await supabase.from("teachers").insert({ user_id: newUserRow.user_id });
+    const { data, error } = await supabase.functions.invoke("invite-user", {
+        body: {
+            username: form.username.trim(),
+            fullName: form.fullName.trim(),
+            email: form.email.trim(),
+            civilStatus: form.civilStatus || null,
+            birthdate: form.birthdate || null,
+            address: form.address.trim() || null,
+            role,
+            yearLevel: form.yearLevel || null,
+            semester: form.semester || null,
+            programId: form.programId ? Number(form.programId) : null,
+            password: 'TESTJULIUS'
+        }
+    });
+
+    if (error) {
+        setErrors({
+            username: error.message || "Failed to invite user."
+        });
+        return;
     }
 
-    const programName = programOpts.find(p => String(p.programId) === form.programId)?.name || "";
+    if (data?.error) {
+        setErrors({
+            username: data.error
+        });
+        return;
+    }
+
+    const programName = programOpts.find(
+        (p) => String(p.programId) === String(form.programId)
+    )?.name || "";
+
     const newUser = {
-      _uuid:       newUserRow.user_id,
-      id:          displayId,
-      username:    form.username.trim(),
-      fullName:    form.fullName.trim(),
-      email:       form.email.trim(),
-      civilStatus: form.civilStatus,
-      birthdate:   form.birthdate,
-      address:     form.address.trim(),
-      role,
-      yearLevel:   form.yearLevel,
-      semester:    form.semester,
-      programName,
-      isActive:    true,
+        _uuid: data.user.user_id,
+        id: data.user.display_id,
+        username: form.username.trim(),
+        fullName: form.fullName.trim(),
+        email: form.email.trim(),
+        civilStatus: form.civilStatus,
+        birthdate: form.birthdate,
+        address: form.address.trim(),
+        role,
+        yearLevel: form.yearLevel,
+        semester: form.semester,
+        programName,
+        isActive: true
     };
-    setUsers(prev => [...prev, newUser]);
+
+    setUsers((prev) => [...prev, newUser]);
     setForm(emptyForm);
     setErrors({});
-    showToast(`${role === "student" ? "Student" : "Teacher"} account created!`);
-  };
+    showToast(`${role === "student" ? "Student" : "Teacher"} invited successfully!`);
+};
 
   // ── SAVE EDIT ──────────────────────────────────────────────────────────────
   const handleSaveEdit = async () => {
@@ -388,14 +390,14 @@ export default function AdminAccounts({ users, setUsers }) {
           </FF>
 
           {/* ── Password field — create mode only ── */}
-          {isCreate && (
+          {/* {isCreate && (
             <>
               <SectionLabel>Security</SectionLabel>
               <FF label="Password" required error={errors.password}>
                 <Input type="password" value={form.password} onChange={e => upd("password", e.target.value)} placeholder="Initial password" />
               </FF>
             </>
-          )}
+          )} */}
 
           {/* ── Student academic info ── */}
           {(role === "student" || (!isCreate && editTarget?.role === "student")) && (
