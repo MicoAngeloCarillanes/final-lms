@@ -95,7 +95,59 @@ function buildScheduleLabel(days, timeStart, timeEnd) {
   return `${days} ${timeStart} - ${timeEnd}`;
 }
 
-const DAY_PATTERNS = ["MWF", "TTh", "MW", "TThS", "MWFS", "Sat", "Sun", "Daily"];
+const DAYS_OF_WEEK = [
+  { key: "M",  label: "Mon" },
+  { key: "T",  label: "Tue" },
+  { key: "W",  label: "Wed" },
+  { key: "Th", label: "Thu" },
+  { key: "F",  label: "Fri" },
+  { key: "Sa", label: "Sat" },
+  { key: "Su", label: "Sun" },
+];
+
+function daysArrayToString(arr) {
+  const order = ["M","T","W","Th","F","Sa","Su"];
+  return order.filter(d => arr.includes(d)).join("");
+}
+
+function daysStringToArray(str) {
+  if (!str) return [];
+  const result = [];
+  let s = str;
+  const order = ["Th","Sa","Su","M","T","W","F"];
+  for (const d of order) {
+    if (s.includes(d)) { result.push(d); s = s.replaceAll(d, ""); }
+  }
+  return result;
+}
+
+// Day toggle button component
+const DayToggleButtons = ({ value, onChange }) => {
+  const selected = daysStringToArray(value);
+  const toggle = (key) => {
+    const next = selected.includes(key) ? selected.filter(d => d !== key) : [...selected, key];
+    onChange(daysArrayToString(next));
+  };
+  return (
+    <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+      {DAYS_OF_WEEK.map(({ key, label }) => {
+        const active = selected.includes(key);
+        return (
+          <button key={key} onClick={() => toggle(key)} type="button"
+            style={{
+              padding: "4px 8px", borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer",
+              border: active ? "1.5px solid #6366f1" : "1.5px solid #334155",
+              background: active ? "rgba(99,102,241,.25)" : "#0f172a",
+              color: active ? "#a5b4fc" : "#475569",
+              transition: "all .15s",
+            }}>
+            {label}
+          </button>
+        );
+      })}
+    </div>
+  );
+};
 const YEAR_LEVELS  = ["1st Year","2nd Year","3rd Year","4th Year","5th Year"];
 const SEMESTERS    = ["1st Semester","2nd Semester","Summer"];
 
@@ -114,7 +166,12 @@ export default function SubAdminCourseManagement({ user, users = [] }) {
   const [toast,       setToast]       = useState({ msg: "", type: "success" });
 
   // ── Schedule form state ──────────────────────────────────────────────────────
-  const [schedForm,   setSchedForm]   = useState({ days: "MWF", timeStart: "", timeEnd: "", room: "" });
+  // hasLab: whether to show a separate Lab schedule block
+  const [schedForm, setSchedForm] = useState({
+    days: "MWF", timeStart: "", timeEnd: "", room: "",
+    hasLab: false,
+    labDays: "", labTimeStart: "", labTimeEnd: "", labRoom: "",
+  });
   const [savingSched, setSavingSched] = useState(false);
 
   // ── Teacher assign state ─────────────────────────────────────────────────────
@@ -299,11 +356,19 @@ export default function SubAdminCourseManagement({ user, users = [] }) {
     setStudentFilter("");
     setEnrollYearFilter(c.yearLevel || "");
     // Prefill schedule form from existing schedule
+    // schedule_label format: "MWF 12:30 PM - 02:30 PM" or "MWF 12:30 PM - 02:30 PM | Lab: TTh 08:00 AM - 11:00 AM (Room 301)"
+    const label = c.schedule || "";
+    const labMatch = label.match(/\|\s*Lab:\s*([A-Za-z]+)\s+([\d:]+\s*[AaPp][Mm]\s*[-–]\s*[\d:]+\s*[AaPp][Mm])\s*(?:\(([^)]*)\))?/);
     setSchedForm({
-      days:      c.dayPattern || (c.schedule ? c.schedule.split(" ")[0] : "MWF"),
-      timeStart: c.timeStart  || "",
-      timeEnd:   c.timeEnd    || "",
-      room:      c.room       || "",
+      days:         c.dayPattern || (label ? label.split(" ")[0] : "MWF"),
+      timeStart:    c.timeStart  || "",
+      timeEnd:      c.timeEnd    || "",
+      room:         c.room       || "",
+      hasLab:       !!labMatch,
+      labDays:      labMatch ? labMatch[1] : "",
+      labTimeStart: labMatch ? labMatch[2].split(/[-–]/)[0].trim() : "",
+      labTimeEnd:   labMatch ? labMatch[2].split(/[-–]/)[1].trim() : "",
+      labRoom:      labMatch ? (labMatch[3] || "") : "",
     });
   };
 
@@ -313,9 +378,17 @@ export default function SubAdminCourseManagement({ user, users = [] }) {
     if (!schedForm.timeStart || !schedForm.timeEnd) {
       showToast("Please fill in start and end times.", "error"); return;
     }
+    if (schedForm.hasLab && (!schedForm.labDays || !schedForm.labTimeStart || !schedForm.labTimeEnd)) {
+      showToast("Please fill in lab schedule days and times.", "error"); return;
+    }
     setSavingSched(true);
     try {
-      const label = buildScheduleLabel(schedForm.days, schedForm.timeStart, schedForm.timeEnd);
+      // Build combined label: "MWF 12:30 PM - 02:30 PM | Lab: TTh 08:00 AM - 11:00 AM (Room 301)"
+      let label = buildScheduleLabel(schedForm.days, schedForm.timeStart, schedForm.timeEnd);
+      if (schedForm.hasLab) {
+        const labLabel = `${schedForm.labDays} ${schedForm.labTimeStart} - ${schedForm.labTimeEnd}`;
+        label += ` | Lab: ${labLabel}${schedForm.labRoom ? ` (${schedForm.labRoom})` : ""}`;
+      }
       const schedPayload = {
         course_id:      selCourse._uuid,
         schedule_label: label,
@@ -596,16 +669,25 @@ export default function SubAdminCourseManagement({ user, users = [] }) {
 
                   {selCourse.schedule && (
                     <div style={{ background: "rgba(99,102,241,.08)", border: "1px solid rgba(99,102,241,.2)", borderRadius: 7, padding: "8px 10px", marginBottom: 10 }}>
-                      <div style={{ fontSize: 11, fontWeight: 700, color: "#a5b4fc" }}>Current: {selCourse.schedule}</div>
+                      {selCourse.schedule.includes("| Lab:") ? (
+                        <>
+                          <div style={{ fontSize: 11, fontWeight: 700, color: "#a5b4fc" }}>📖 Lecture: {selCourse.schedule.split("| Lab:")[0].trim()}</div>
+                          <div style={{ fontSize: 11, fontWeight: 700, color: "#818cf8", marginTop: 3 }}>🔬 Lab: {selCourse.schedule.split("| Lab:")[1].trim()}</div>
+                        </>
+                      ) : (
+                        <div style={{ fontSize: 11, fontWeight: 700, color: "#a5b4fc" }}>Current: {selCourse.schedule}</div>
+                      )}
                       {selCourse.room && <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>Room: {selCourse.room}</div>}
                     </div>
                   )}
 
                   <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    {/* ── Lecture Schedule ── */}
+                    <div style={{ fontSize: 10, fontWeight: 700, color: "#6366f1", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 2 }}>
+                      📖 Lecture
+                    </div>
                     <FF label="Day Pattern">
-                      <Sel value={schedForm.days} onChange={e => setSchedForm(f => ({ ...f, days: e.target.value }))}>
-                        {DAY_PATTERNS.map(d => <option key={d}>{d}</option>)}
-                      </Sel>
+                      <DayToggleButtons value={schedForm.days} onChange={v => setSchedForm(f => ({ ...f, days: v }))} />
                     </FF>
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
                       <FF label="Start Time">
@@ -618,6 +700,47 @@ export default function SubAdminCourseManagement({ user, users = [] }) {
                     <FF label="Room">
                       <Input value={schedForm.room} onChange={e => setSchedForm(f => ({ ...f, room: e.target.value }))} placeholder="e.g. Room 201" />
                     </FF>
+
+                    {/* ── Lab toggle ── */}
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, paddingTop: 4, borderTop: "1px solid #1e293b" }}>
+                      <button type="button" onClick={() => setSchedForm(f => ({ ...f, hasLab: !f.hasLab }))}
+                        style={{
+                          width: 32, height: 18, borderRadius: 9, border: "none", cursor: "pointer", position: "relative",
+                          background: schedForm.hasLab ? "#6366f1" : "#334155", transition: "background .2s", flexShrink: 0,
+                        }}>
+                        <span style={{
+                          position: "absolute", top: 3, left: schedForm.hasLab ? 16 : 3, width: 12, height: 12,
+                          borderRadius: "50%", background: "#fff", transition: "left .2s",
+                        }} />
+                      </button>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: schedForm.hasLab ? "#a5b4fc" : "#475569" }}>
+                        🔬 Has Laboratory Class
+                      </span>
+                    </div>
+
+                    {/* ── Laboratory Schedule ── */}
+                    {schedForm.hasLab && (
+                      <div style={{ background: "rgba(99,102,241,.06)", border: "1px solid rgba(99,102,241,.2)", borderRadius: 8, padding: "10px 10px 6px", display: "flex", flexDirection: "column", gap: 8 }}>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: "#818cf8", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                          🔬 Laboratory
+                        </div>
+                        <FF label="Lab Day Pattern">
+                          <DayToggleButtons value={schedForm.labDays} onChange={v => setSchedForm(f => ({ ...f, labDays: v }))} />
+                        </FF>
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                          <FF label="Lab Start">
+                            <Input type="time" value={schedForm.labTimeStart} onChange={e => setSchedForm(f => ({ ...f, labTimeStart: e.target.value }))} />
+                          </FF>
+                          <FF label="Lab End">
+                            <Input type="time" value={schedForm.labTimeEnd} onChange={e => setSchedForm(f => ({ ...f, labTimeEnd: e.target.value }))} />
+                          </FF>
+                        </div>
+                        <FF label="Lab Room">
+                          <Input value={schedForm.labRoom} onChange={e => setSchedForm(f => ({ ...f, labRoom: e.target.value }))} placeholder="e.g. Comp Lab 1" />
+                        </FF>
+                      </div>
+                    )}
+
                     <Btn onClick={saveSchedule} disabled={savingSched} style={{ width: "100%" }}>
                       {savingSched ? "⏳ Saving…" : selCourse._scheduleId ? "✓ Update Schedule" : "✦ Set Schedule"}
                     </Btn>
