@@ -2,20 +2,19 @@
  * AdminBulkEnroll.jsx
  * FOLDER: src/admin/pages/AdminBulkEnroll.jsx
  *
- * Lets the admin bulk-assign students to courses automatically based on
- * matching Program + Year Level + Semester.
+ * Updated to work with the new course structure:
+ *   - Courses are matched via course_program_map (not directly on courses table)
+ *   - Students are enrolled into specific sections, not just courses
+ *   - If multiple sections exist for a course, admin picks one (or auto-balances)
  *
- * Logic:
- *   - Courses match when: course.programId === selected program
- *                     AND course.yearLevel  === selected year level
- *                     AND course.semester   === selected semester
- *   - Students match when: student.programId === selected program
- *                      AND student.yearLevel  === selected year level
- *                      AND student.semester   === selected semester
- *   - On "Assign", every matching student is enrolled in every matching course,
- *     skipping pairs that are already enrolled.
+ * Flow:
+ *   Step 1  Select Program + Year Level + Semester
+ *   Step 2  Preview matched courses (from course_program_map) and their sections
+ *           For each course, pick a section — or "auto-balance" to spread evenly
+ *   Step 3  Preview matched students
+ *   Step 4  Assign → inserts into student_section_assignments
  */
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { supabase } from "../../supabaseClient";
 import { programApi } from "../../lib/api";
 import { Badge, Btn, Sel, FF } from "../../components/ui";
@@ -25,104 +24,199 @@ const YEAR_LEVELS = ["1st Year", "2nd Year", "3rd Year", "4th Year"];
 const SEMESTERS   = ["1st Semester", "2nd Semester", "Summer"];
 
 const S = {
-  label: { fontSize: 10, fontWeight: 800, color: "#475569", textTransform: "uppercase", letterSpacing: "0.07em" },
   card:  { background: "#1e293b", border: "1px solid #334155", borderRadius: 10, padding: "14px 16px" },
   row:   { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "7px 0", borderBottom: "1px solid #1e293b" },
+  badge: (color) => ({ background: `rgba(${color},.12)`, color: `rgb(${color})`, padding: "1px 7px", borderRadius: 4, fontSize: 11, fontWeight: 700 }),
 };
 
-export default function AdminBulkEnroll({ users = [], courses = [], enrollments = [], setEnrollments }) {
-  const students = users.filter(u => u.role === "student");
+export default function AdminBulkEnroll() {
+  // ── Reference data ────────────────────────────────────────────────────────
+  const [programOpts, setProgramOpts]   = useState([]);
+  const [activeSyId,  setActiveSyId]    = useState(null);
 
-  const [programOpts,  setProgramOpts]  = useState([]);
-  const [selProgram,   setSelProgram]   = useState("");   // programId string
-  const [selYear,      setSelYear]      = useState("");
-  const [selSem,       setSelSem]       = useState("");
-  const [assigning,    setAssigning]    = useState(false);
-  const [result,       setResult]       = useState(null); // { enrolled, skipped, errors }
-  const [toast,        setToast]        = useState({ msg: "", type: "success" });
+  // ── Criteria ──────────────────────────────────────────────────────────────
+  const [selProgram, setSelProgram] = useState("");
+  const [selYear,    setSelYear]    = useState("");
+  const [selSem,     setSelSem]     = useState("");
 
-  const showToast = (msg, type = "success") => {
-    setToast({ msg, type });
-    setTimeout(() => setToast({ msg: "", type: "success" }), 4000);
+  // ── Matched data ──────────────────────────────────────────────────────────
+  // matchedCourses: [{ course_id, course_code, course_name, units, sections: [...] }]
+  const [matchedCourses,   setMatchedCourses]   = useState([]);
+  const [matchedStudents,  setMatchedStudents]  = useState([]);
+  // selectedSections: { [course_id]: section_id | "auto" }
+  const [selectedSections, setSelectedSections] = useState({});
+
+  // ── UI ────────────────────────────────────────────────────────────────────
+  const [loading,   setLoading]   = useState(false);
+  const [assigning, setAssigning] = useState(false);
+  const [result,    setResult]    = useState(null);
+  const [toast,     setToast]     = useState({ msg: "", err: false });
+
+  const showToast = (msg, err = false) => {
+    setToast({ msg, err });
+    setTimeout(() => setToast({ msg: "", err: false }), 4000);
   };
 
+  // ── Load reference data ───────────────────────────────────────────────────
   useEffect(() => {
-    programApi.getOptions()
-      .then(opts => setProgramOpts(opts ?? []))
-      .catch(console.error);
+    programApi.getOptions().then(opts => setProgramOpts(opts ?? [])).catch(console.error);
+    supabase.from("school_years").select("sy_id").eq("is_active", true).single()
+      .then(({ data }) => { if (data) setActiveSyId(data.sy_id); });
   }, []);
 
   const ready = selProgram && selYear && selSem;
 
-  // ── Matching courses ─────────────────────────────────────────────────────────
-  const matchedCourses = useMemo(() => {
-    if (!ready) return [];
-    return courses.filter(c =>
-      String(c.programId) === selProgram &&
-      c.yearLevel === selYear &&
-      c.semester  === selSem
-    );
-  }, [courses, selProgram, selYear, selSem, ready]);
+  // ── Load matching courses + their sections ────────────────────────────────
+  const loadMatchedCourses = useCallback(async () => {
+    if (!ready || !activeSyId) return;
+    setLoading(true);
+    setResult(null);
 
-  // ── Matching students ────────────────────────────────────────────────────────
-  const matchedStudents = useMemo(() => {
-    if (!ready) return [];
-    return students.filter(s =>
-      String(s.programId) === selProgram &&
-      s.yearLevel === selYear &&
-      s.semester  === selSem
-    );
-  }, [students, selProgram, selYear, selSem, ready]);
+    // 1. Get courses from course_program_map that match criteria
+    const { data: maps, error: mapErr } = await supabase
+      .from("course_program_map")
+      .select("course_id, courses(course_id, course_code, course_name, units)")
+      .eq("program_id", selProgram)
+      .eq("year_level", selYear)
+      .eq("semester", selSem);
 
-  // ── Preview: how many pairs already enrolled vs new ─────────────────────────
-  const { newPairs, alreadyPairs } = useMemo(() => {
-    if (!ready || !matchedCourses.length || !matchedStudents.length) {
-      return { newPairs: 0, alreadyPairs: 0 };
+    if (mapErr || !maps?.length) {
+      setMatchedCourses([]);
+      setMatchedStudents([]);
+      setSelectedSections({});
+      setLoading(false);
+      return;
     }
-    const enrolledSet = new Set(enrollments.map(e => `${e.studentId}||${e.courseId}`));
-    let newCount = 0, skipCount = 0;
-    matchedStudents.forEach(s => {
-      matchedCourses.forEach(c => {
-        if (enrolledSet.has(`${s.id}||${c.id}`)) skipCount++;
-        else newCount++;
-      });
-    });
-    return { newPairs: newCount, alreadyPairs: skipCount };
-  }, [matchedCourses, matchedStudents, enrollments, ready]);
 
-  // ── Bulk assign ──────────────────────────────────────────────────────────────
+    // 2. For each matched course, load active sections for the current SY
+    const courseIds = maps.map(m => m.course_id);
+    const { data: sectionRows } = await supabase
+      .from("v_course_sections")
+      .select("*")
+      .in("course_id", courseIds)
+      .eq("sy_id", activeSyId)
+      .eq("is_active", true)
+      .order("section_code");
+
+    // 3. Group sections by course_id
+    const sectionsByCourse = (sectionRows || []).reduce((acc, s) => {
+      if (!acc[s.course_id]) acc[s.course_id] = [];
+      acc[s.course_id].push(s);
+      return acc;
+    }, {});
+
+    const courses = maps.map(m => ({
+      ...m.courses,
+      sections: sectionsByCourse[m.course_id] || [],
+    }));
+
+    setMatchedCourses(courses);
+
+    // 4. Default section selection: if only one section, auto-select it; otherwise "auto"
+    const defaults = {};
+    courses.forEach(c => {
+      defaults[c.course_id] = c.sections.length === 1
+        ? c.sections[0].section_id
+        : "auto";
+    });
+    setSelectedSections(defaults);
+
+    // 5. Load matched students
+    const { data: studRows } = await supabase
+      .from("users")
+      .select("user_id, username, first_name, last_name, middle_name, student_id_number, program_id, year_level, semester")
+      .eq("role", "student")
+      .eq("is_active", true)
+      .eq("program_id", selProgram)
+      .eq("year_level", selYear)
+      .eq("semester", selSem);
+
+    setMatchedStudents(studRows || []);
+    setLoading(false);
+  }, [ready, activeSyId, selProgram, selYear, selSem]);
+
+  useEffect(() => { loadMatchedCourses(); }, [loadMatchedCourses]);
+
+  // ── Preview: count new pairs ──────────────────────────────────────────────
+  const { newPairs, alreadyPairs, canAssign } = useMemo(() => {
+    if (!matchedCourses.length || !matchedStudents.length) return { newPairs: 0, alreadyPairs: 0, canAssign: false };
+
+    // Count courses that have no section assigned at all (no sections exist)
+    const coursesWithSections = matchedCourses.filter(c => c.sections.length > 0);
+    const canAssign = coursesWithSections.length > 0;
+
+    // We don't do a full pre-check of every enrollment here (would require N×M queries)
+    // The actual upsert will skip duplicates via ON CONFLICT DO NOTHING
+    const totalPairs = matchedStudents.length * coursesWithSections.length;
+    return { newPairs: totalPairs, alreadyPairs: 0, canAssign };
+  }, [matchedCourses, matchedStudents]);
+
+  // ── Pick section for a student (for "auto" mode: least-full section) ──────
+  const pickSection = (course, existingAssignments) => {
+    const sectionId = selectedSections[course.course_id];
+    if (sectionId !== "auto") return sectionId;
+
+    // Auto-balance: pick section with fewest current enrollments
+    const counts = {};
+    course.sections.forEach(s => { counts[s.section_id] = s.enrolled_count || 0; });
+    existingAssignments.forEach(a => {
+      if (counts[a.section_id] !== undefined) counts[a.section_id]++;
+    });
+
+    let best = course.sections[0]?.section_id;
+    let bestCount = Infinity;
+    for (const [sid, cnt] of Object.entries(counts)) {
+      if (cnt < bestCount) { bestCount = cnt; best = Number(sid); }
+    }
+    return best;
+  };
+
+  // ── Bulk assign ───────────────────────────────────────────────────────────
   const handleAssign = async () => {
-    if (!ready || assigning || matchedCourses.length === 0 || matchedStudents.length === 0) return;
+    if (!canAssign || assigning) return;
     setAssigning(true);
     setResult(null);
 
-    const enrolledSet = new Set(enrollments.map(e => `${e.studentId}||${e.courseId}`));
+    const activeCourses = matchedCourses.filter(c => c.sections.length > 0);
+
+    // Gather any existing enrollments for these sections to help auto-balance
+    const allSectionIds = activeCourses.flatMap(c => c.sections.map(s => s.section_id));
+    const { data: existingEnrollments } = await supabase
+      .from("student_section_assignments")
+      .select("student_id, section_id")
+      .in("section_id", allSectionIds);
+
+    const existingSet = new Set((existingEnrollments || []).map(e => `${e.student_id}||${e.section_id}`));
+
     let enrolled = 0, skipped = 0, errors = 0;
-    const newEnrollments = [];
 
-    for (const student of matchedStudents) {
-      for (const course of matchedCourses) {
-        // Skip already-enrolled pairs
-        if (enrolledSet.has(`${student.id}||${course.id}`)) { skipped++; continue; }
+    for (const course of activeCourses) {
+      // For auto mode, pick section once per course per assign run (not per student)
+      // This keeps all students together in one section. If you want per-student balancing,
+      // change this to call pickSection() inside the student loop.
+      const sectionId = pickSection(course, existingEnrollments || []);
+      if (!sectionId) { errors++; continue; }
 
-        const { error } = await supabase.from("student_course_assignments").upsert({
-          student_id:        student._uuid,
-          course_id:         course._uuid,
+      const rows = matchedStudents
+        .filter(s => !existingSet.has(`${s.user_id}||${sectionId}`))
+        .map(s => ({
+          student_id:        s.user_id,
+          section_id:        sectionId,
           enrollment_status: "Enrolled",
-          academic_year:     "2025-2026",
-          semester:          course.semester || null,
-        }, { onConflict: "student_id,course_id" });
+          academic_year:     "", // filled from school year label if needed
+        }));
 
+      const skippedHere = matchedStudents.length - rows.length;
+      skipped += skippedHere;
+
+      if (rows.length > 0) {
+        const { data: ins, error } = await supabase
+          .from("student_section_assignments")
+          .upsert(rows, { onConflict: "student_id,section_id", ignoreDuplicates: true })
+          .select("assignment_id");
         if (error) { errors++; }
-        else {
-          enrolled++;
-          newEnrollments.push({ studentId: student.id, courseId: course.id, grade: null, status: "Enrolled" });
-        }
+        else { enrolled += ins?.length ?? 0; skipped += rows.length - (ins?.length ?? 0); }
       }
-    }
-
-    if (newEnrollments.length > 0) {
-      setEnrollments(prev => [...prev, ...newEnrollments]);
     }
 
     setResult({ enrolled, skipped, errors });
@@ -130,31 +224,33 @@ export default function AdminBulkEnroll({ users = [], courses = [], enrollments 
       errors > 0
         ? `Done with ${errors} error(s). ${enrolled} enrolled, ${skipped} skipped.`
         : `✓ ${enrolled} enrollment${enrolled !== 1 ? "s" : ""} created, ${skipped} already existed.`,
-      errors > 0 ? "error" : "success"
+      errors > 0
     );
+    await loadMatchedCourses(); // refresh enrolled counts
     setAssigning(false);
   };
 
-  const programName = programOpts.find(p => String(p.programId) === selProgram)?.name || "";
-
+  // ─────────────────────────────────────────────────────────────────────────
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
-      <TopBar title="Bulk Course Assignment" subtitle="Auto-enroll students into courses by Program · Year Level · Semester" />
+      <TopBar title="Bulk Course Assignment" subtitle="Auto-enroll students into sections by Program · Year Level · Semester" />
 
       {/* Toast */}
       {toast.msg && (
-        <div style={{ position: "fixed", top: 16, right: 16, zIndex: 9999, maxWidth: 460, background: toast.type === "error" ? "rgba(239,68,68,.15)" : "rgba(16,185,129,.15)", border: `1px solid ${toast.type === "error" ? "rgba(239,68,68,.3)" : "rgba(16,185,129,.3)"}`, borderRadius: 8, padding: "10px 16px", color: toast.type === "error" ? "#f87171" : "#34d399", fontSize: 13, fontWeight: 600 }}>
-          {toast.type === "error" ? "⚠ " : "✓ "}{toast.msg}
+        <div style={{ position: "fixed", top: 16, right: 16, zIndex: 9999, maxWidth: 460,
+          background: toast.err ? "rgba(239,68,68,.15)" : "rgba(16,185,129,.15)",
+          border: `1px solid ${toast.err ? "rgba(239,68,68,.3)" : "rgba(16,185,129,.3)"}`,
+          borderRadius: 8, padding: "10px 16px",
+          color: toast.err ? "#f87171" : "#34d399", fontSize: 13, fontWeight: 600 }}>
+          {toast.err ? "⚠ " : "✓ "}{toast.msg}
         </div>
       )}
 
-      <div style={{ flex: 1, overflowY: "auto", padding: "20px 24px", display: "flex", flexDirection: "column", gap: 18, maxWidth: 900 }}>
+      <div style={{ flex: 1, overflowY: "auto", padding: "20px 24px", display: "flex", flexDirection: "column", gap: 18, maxWidth: 960 }}>
 
         {/* ── Step 1: Criteria ── */}
         <div style={S.card}>
-          <div style={{ fontWeight: 800, fontSize: 14, color: "#f1f5f9", marginBottom: 14 }}>
-            Step 1 — Select Criteria
-          </div>
+          <div style={{ fontWeight: 800, fontSize: 14, color: "#f1f5f9", marginBottom: 14 }}>Step 1 — Select Criteria</div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14 }}>
             <FF label="Program">
               <Sel value={selProgram} onChange={e => { setSelProgram(e.target.value); setResult(null); }}>
@@ -179,114 +275,164 @@ export default function AdminBulkEnroll({ users = [], courses = [], enrollments 
           </div>
         </div>
 
-        {/* ── Step 2: Preview (only when criteria is fully set) ── */}
+        {/* ── Step 2: Matched courses + section picker ── */}
         {ready && (
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-
-            {/* Matched Courses */}
-            <div style={S.card}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-                <div style={{ fontWeight: 800, fontSize: 13, color: "#f1f5f9" }}>📚 Matched Courses</div>
-                <Badge color={matchedCourses.length > 0 ? "info" : "default"}>{matchedCourses.length}</Badge>
-              </div>
-              {matchedCourses.length === 0 ? (
-                <div style={{ fontSize: 12, color: "#475569", textAlign: "center", padding: "16px 0" }}>
-                  No courses found for {selYear} · {selSem} in this program.
-                </div>
-              ) : (
-                <div style={{ display: "flex", flexDirection: "column" }}>
-                  {matchedCourses.map((c, i) => (
-                    <div key={c._uuid} style={{ ...S.row, borderBottom: i < matchedCourses.length - 1 ? "1px solid #334155" : "none" }}>
-                      <div>
-                        <div style={{ fontSize: 13, fontWeight: 700, color: "#e2e8f0" }}>{c.code}</div>
-                        <div style={{ fontSize: 11, color: "#64748b" }}>{c.name}</div>
-                      </div>
-                      <div style={{ fontSize: 11, color: "#475569" }}>{c.units} units</div>
-                    </div>
-                  ))}
-                </div>
-              )}
+          <div style={S.card}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+              <div style={{ fontWeight: 800, fontSize: 13, color: "#f1f5f9" }}>📚 Matched Courses</div>
+              <Badge color={matchedCourses.length > 0 ? "info" : "default"}>{matchedCourses.length}</Badge>
             </div>
 
-            {/* Matched Students */}
-            <div style={S.card}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-                <div style={{ fontWeight: 800, fontSize: 13, color: "#f1f5f9" }}>🎓 Matched Students</div>
-                <Badge color={matchedStudents.length > 0 ? "success" : "default"}>{matchedStudents.length}</Badge>
+            {loading && <div style={{ fontSize: 12, color: "#475569", textAlign: "center", padding: "16px 0" }}>Loading…</div>}
+
+            {!loading && matchedCourses.length === 0 && (
+              <div style={{ fontSize: 12, color: "#475569", textAlign: "center", padding: "16px 0" }}>
+                No courses mapped to this program / year / semester.
+                <br/>Go to <em>Course Sections → Program Maps</em> to add mappings.
               </div>
-              {matchedStudents.length === 0 ? (
-                <div style={{ fontSize: 12, color: "#475569", textAlign: "center", padding: "16px 0" }}>
-                  No students found for {selYear} · {selSem} in this program.
-                </div>
-              ) : (
-                <div style={{ display: "flex", flexDirection: "column", maxHeight: 220, overflowY: "auto" }}>
-                  {matchedStudents.map((s, i) => (
-                    <div key={s._uuid} style={{ ...S.row, borderBottom: i < matchedStudents.length - 1 ? "1px solid #334155" : "none" }}>
-                      <div>
-                        <div style={{ fontSize: 13, fontWeight: 700, color: "#e2e8f0" }}>{s.fullName}</div>
-                        <div style={{ fontSize: 11, color: "#64748b" }}>{s.id} · {s.username}</div>
-                      </div>
+            )}
+
+            {!loading && matchedCourses.map((c, i) => {
+              const hasSections = c.sections.length > 0;
+              return (
+                <div key={c.course_id} style={{
+                  ...S.row,
+                  borderBottom: i < matchedCourses.length - 1 ? "1px solid #334155" : "none",
+                  alignItems: "flex-start", flexDirection: "column", gap: 6, paddingTop: 10, paddingBottom: 10,
+                }}>
+                  {/* Course info row */}
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%" }}>
+                    <div>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: "#e2e8f0" }}>{c.course_code}</span>
+                      <span style={{ fontSize: 11, color: "#64748b", marginLeft: 8 }}>{c.course_name}</span>
                     </div>
-                  ))}
+                    <span style={{ fontSize: 11, color: "#475569" }}>{c.units} units</span>
+                  </div>
+
+                  {/* Section picker */}
+                  {!hasSections ? (
+                    <div style={{ fontSize: 11, color: "#f87171", fontStyle: "italic" }}>
+                      ⚠ No sections created yet for this SY — add sections first in Course Sections.
+                    </div>
+                  ) : (
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                      <span style={{ fontSize: 11, color: "#475569" }}>Assign to section:</span>
+                      {c.sections.length > 1 && (
+                        <button
+                          onClick={() => setSelectedSections(p => ({ ...p, [c.course_id]: "auto" }))}
+                          style={{
+                            padding: "2px 9px", borderRadius: 4, fontSize: 11, fontWeight: 700, cursor: "pointer",
+                            background: selectedSections[c.course_id] === "auto" ? "rgba(99,102,241,.25)" : "rgba(99,102,241,.08)",
+                            border: selectedSections[c.course_id] === "auto" ? "1px solid rgba(99,102,241,.5)" : "1px solid transparent",
+                            color: "#a5b4fc",
+                          }}
+                        >
+                          Auto-balance
+                        </button>
+                      )}
+                      {c.sections.map(s => {
+                        const selected = selectedSections[c.course_id] === s.section_id;
+                        const pct = Math.round((s.enrolled_count / s.max_students) * 100);
+                        return (
+                          <button key={s.section_id}
+                            onClick={() => setSelectedSections(p => ({ ...p, [c.course_id]: s.section_id }))}
+                            style={{
+                              padding: "2px 9px", borderRadius: 4, fontSize: 11, fontWeight: 700, cursor: "pointer",
+                              background: selected ? "rgba(16,185,129,.2)" : "#0f172a",
+                              border: selected ? "1px solid rgba(16,185,129,.4)" : "1px solid #334155",
+                              color: selected ? "#34d399" : "#94a3b8",
+                            }}
+                          >
+                            Section {s.section_code}
+                            {s.teacher_name ? ` · ${s.teacher_name.split(" ").slice(-1)[0]}` : ""}
+                            {s.schedule ? ` · ${s.schedule}` : ""}
+                            <span style={{ color: pct > 90 ? "#f87171" : "#475569", marginLeft: 4 }}>
+                              ({s.enrolled_count}/{s.max_students})
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
+              );
+            })}
           </div>
         )}
 
-        {/* ── Step 3: Summary + Assign button ── */}
-        {ready && (matchedCourses.length > 0 || matchedStudents.length > 0) && (
+        {/* ── Step 3: Matched students ── */}
+        {ready && matchedCourses.length > 0 && (
+          <div style={S.card}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+              <div style={{ fontWeight: 800, fontSize: 13, color: "#f1f5f9" }}>🎓 Matched Students</div>
+              <Badge color={matchedStudents.length > 0 ? "success" : "default"}>{matchedStudents.length}</Badge>
+            </div>
+            {matchedStudents.length === 0 ? (
+              <div style={{ fontSize: 12, color: "#475569", textAlign: "center", padding: "16px 0" }}>
+                No students found for this program / year / semester.
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", maxHeight: 220, overflowY: "auto" }}>
+                {matchedStudents.map((s, i) => (
+                  <div key={s.user_id} style={{ ...S.row, borderBottom: i < matchedStudents.length - 1 ? "1px solid #334155" : "none" }}>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: "#e2e8f0" }}>
+                        {[s.last_name, s.first_name, s.middle_name].filter(Boolean).join(", ")}
+                      </div>
+                      <div style={{ fontSize: 11, color: "#64748b" }}>{s.student_id_number} · {s.username}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── Step 4: Summary + Assign button ── */}
+        {ready && canAssign && matchedStudents.length > 0 && (
           <div style={{ ...S.card, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16 }}>
             <div>
-              <div style={{ fontWeight: 800, fontSize: 13, color: "#f1f5f9", marginBottom: 6 }}>
-                Step 2 — Assign Courses
+              <div style={{ fontWeight: 800, fontSize: 13, color: "#f1f5f9", marginBottom: 6 }}>Step 2 — Assign Sections</div>
+              <div style={{ fontSize: 12, color: "#94a3b8", lineHeight: 1.6 }}>
+                <span style={{ color: "#a5b4fc", fontWeight: 700 }}>{matchedStudents.length} student{matchedStudents.length !== 1 ? "s" : ""}</span>
+                {" "}×{" "}
+                <span style={{ color: "#60a5fa", fontWeight: 700 }}>{matchedCourses.filter(c => c.sections.length > 0).length} course{matchedCourses.filter(c => c.sections.length > 0).length !== 1 ? "s" : ""}</span>
+                {" "}={" "}
+                <span style={{ color: "#f1f5f9", fontWeight: 700 }}>{newPairs} total pairs</span>
+                <span style={{ color: "#475569" }}> · duplicates will be skipped</span>
               </div>
-              {matchedCourses.length > 0 && matchedStudents.length > 0 ? (
-                <div style={{ fontSize: 12, color: "#94a3b8", lineHeight: 1.6 }}>
-                  <span style={{ color: "#a5b4fc", fontWeight: 700 }}>{matchedStudents.length} student{matchedStudents.length !== 1 ? "s" : ""}</span>
-                  {" "}&times;{" "}
-                  <span style={{ color: "#60a5fa", fontWeight: 700 }}>{matchedCourses.length} course{matchedCourses.length !== 1 ? "s" : ""}</span>
-                  {" "}={" "}
-                  <span style={{ color: "#f1f5f9", fontWeight: 700 }}>{matchedStudents.length * matchedCourses.length} total pairs</span>
-                  {alreadyPairs > 0 && <span style={{ color: "#475569" }}> · {alreadyPairs} already enrolled (will skip)</span>}
-                  {newPairs > 0    && <span style={{ color: "#34d399" }}> · {newPairs} new enrollment{newPairs !== 1 ? "s" : ""}</span>}
-                </div>
-              ) : (
-                <div style={{ fontSize: 12, color: "#475569" }}>
-                  {matchedCourses.length === 0
-                    ? "No courses matched — add courses for this program / year / semester first."
-                    : "No students matched — no students are set to this program / year / semester."}
+              {matchedCourses.some(c => c.sections.length === 0) && (
+                <div style={{ fontSize: 11, color: "#fbbf24", marginTop: 4 }}>
+                  ⚠ {matchedCourses.filter(c => c.sections.length === 0).length} course(s) have no sections and will be skipped.
                 </div>
               )}
               {result && (
                 <div style={{ marginTop: 8, fontSize: 12, display: "flex", gap: 12 }}>
                   <span style={{ color: "#34d399", fontWeight: 700 }}>✓ {result.enrolled} enrolled</span>
                   <span style={{ color: "#475569" }}>↷ {result.skipped} skipped</span>
-                  {result.errors > 0 && <span style={{ color: "#f87171", fontWeight: 700 }}>⚠ {result.errors} errors</span>}
+                  {result.errors > 0 && <span style={{ color: "#f87171", fontWeight: 700 }}>⚠ {result.errors} error(s)</span>}
                 </div>
               )}
             </div>
 
             <Btn
               onClick={handleAssign}
-              disabled={assigning || newPairs === 0}
+              disabled={assigning || !canAssign}
               style={{ whiteSpace: "nowrap", flexShrink: 0, fontSize: 14, padding: "10px 22px" }}
             >
-              {assigning
-                ? "⏳ Assigning…"
-                : newPairs === 0
-                ? "✓ All Already Enrolled"
-                : `🎓 Assign ${newPairs} Enrollment${newPairs !== 1 ? "s" : ""}`}
+              {assigning ? "⏳ Assigning…" : `🎓 Assign ${newPairs} Pair${newPairs !== 1 ? "s" : ""}`}
             </Btn>
           </div>
         )}
 
-        {/* Empty state when criteria not yet set */}
+        {/* Empty state */}
         {!ready && (
           <div style={{ textAlign: "center", padding: "48px 0", color: "#334155" }}>
             <div style={{ fontSize: 36, marginBottom: 12 }}>📋</div>
-            <div style={{ fontSize: 14, fontWeight: 700, color: "#475569" }}>Select a Program, Year Level, and Semester above</div>
-            <div style={{ fontSize: 12, color: "#334155", marginTop: 4 }}>Students and courses matching all three criteria will be previewed before assigning.</div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: "#475569" }}>Select Program, Year Level, and Semester above</div>
+            <div style={{ fontSize: 12, color: "#334155", marginTop: 4 }}>
+              Students and courses matching all three criteria will preview before assigning.
+            </div>
           </div>
         )}
       </div>

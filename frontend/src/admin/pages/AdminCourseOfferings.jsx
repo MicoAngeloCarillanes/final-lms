@@ -1,337 +1,532 @@
 /**
- * AdminCourseOfferings.jsx
- * FOLDER: src/admin/pages/AdminCourseOfferings.jsx
+ * AdminCourseSections.jsx
+ * FOLDER: src/admin/pages/AdminCourseSections.jsx
  *
- * Admin creates predetermined course offerings per SY + term,
- * then runs auto-assign to enroll matching students.
+ * Replaces AdminCourseOfferings.jsx
+ *
+ * Manages course SECTIONS — each section is one teacher + one schedule
+ * for a course within a school year + term.
+ * Multiple sections per course are fully supported (Section A, B, C…).
  */
 import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "../../supabaseClient";
 import { Badge, Btn, FF, Input, Sel, Toast } from "../../components/ui";
 import TopBar from "../../components/TopBar";
 
-const TERMS = ["Prelim", "Midterm", "Semi-Final", "Finals"];
+const TERMS       = ["Prelim", "Midterm", "Semi-Final", "Finals"];
 const YEAR_LEVELS = ["1st Year", "2nd Year", "3rd Year", "4th Year", "5th Year"];
+const SEMESTERS   = ["1st Semester", "2nd Semester", "Summer"];
 
 const TERM_COLOR = {
-  Prelim:      { bg: "rgba(99,102,241,.15)",  text: "#a5b4fc" },
-  Midterm:     { bg: "rgba(59,130,246,.15)",  text: "#60a5fa" },
-  "Semi-Final":{ bg: "rgba(245,158,11,.15)",  text: "#fbbf24" },
-  Finals:      { bg: "rgba(239,68,68,.15)",   text: "#f87171" },
+  Prelim:        { bg: "rgba(99,102,241,.15)",  text: "#a5b4fc" },
+  Midterm:       { bg: "rgba(59,130,246,.15)",  text: "#60a5fa" },
+  "Semi-Final":  { bg: "rgba(245,158,11,.15)",  text: "#fbbf24" },
+  Finals:        { bg: "rgba(239,68,68,.15)",   text: "#f87171" },
 };
 
-const emptyForm = { courseId: "", syId: "", term: "Prelim", yearLevel: "", programId: "", maxStudents: 40 };
+const emptySection = {
+  courseId: "", syId: "", term: "Prelim",
+  sectionCode: "A", teacherName: "", schedule: "", room: "", maxStudents: 40,
+};
 
-export default function AdminCourseOfferings() {
+const emptyMapping = {
+  courseId: "", programId: "", yearLevel: "", semester: "",
+};
+
+export default function AdminCourseSections() {
+  // ── Reference data ───────────────────────────────────────────────────────
   const [schoolYears, setSchoolYears] = useState([]);
   const [programs,    setPrograms]    = useState([]);
   const [courses,     setCourses]     = useState([]);
-  const [offerings,   setOfferings]   = useState([]);
-  const [filterSy,    setFilterSy]    = useState("");
-  const [filterTerm,  setFilterTerm]  = useState("");
-  const [form,        setForm]        = useState(emptyForm);
-  const [showForm,    setShowForm]    = useState(false);
-  const [loading,     setLoading]     = useState(false);
-  const [saving,      setSaving]      = useState(false);
-  const [assigning,   setAssigning]   = useState(null); // offeringId being auto-assigned
-  const [toast,       setToast]       = useState("");
-  const [toastErr,    setToastErr]    = useState("");
-  const [assignResult, setAssignResult] = useState(null); // {assigned, skipped, courseCode}
 
-  const showOk  = (m) => { setToast(m);    setTimeout(() => setToast(""),    3500); };
-  const showErr = (m) => { setToastErr(m); setTimeout(() => setToastErr(""), 4500); };
+  // ── Sections tab ─────────────────────────────────────────────────────────
+  const [sections,    setSections]   = useState([]);
+  const [filterSy,    setFilterSy]   = useState("");
+  const [filterTerm,  setFilterTerm] = useState("");
+  const [filterCourse,setFilterCourse] = useState("");
+  const [sectionForm, setSectionForm] = useState(emptySection);
+  const [showSectionForm, setShowSectionForm] = useState(false);
+  const [editingSection, setEditingSection] = useState(null); // section_id or null
+
+  // ── Program map tab ───────────────────────────────────────────────────────
+  const [activeTab,   setActiveTab]  = useState("sections"); // "sections" | "mappings"
+  const [mappings,    setMappings]   = useState([]);
+  const [mappingForm, setMappingForm] = useState(emptyMapping);
+  const [showMappingForm, setShowMappingForm] = useState(false);
+  const [mapFilter,   setMapFilter]  = useState({ courseId: "", programId: "" });
+
+  // ── UI state ──────────────────────────────────────────────────────────────
+  const [loading, setLoading] = useState(false);
+  const [saving,  setSaving]  = useState(false);
+  const [toast,   setToast]   = useState({ msg: "", err: false });
+
+  const showOk  = (m) => { setToast({ msg: m, err: false });  setTimeout(() => setToast({ msg: "", err: false }), 3500); };
+  const showErr = (m) => { setToast({ msg: m, err: true });   setTimeout(() => setToast({ msg: "", err: false }), 4500); };
 
   // ── Load reference data ───────────────────────────────────────────────────
   useEffect(() => {
     async function load() {
       const [syRes, progRes, courseRes] = await Promise.all([
         supabase.from("school_years").select("sy_id, label, is_active").order("created_at", { ascending: false }),
-        supabase.from("program").select("program_id, name").eq("is_deleted", false).eq("is_active", true),
-        supabase.from("courses").select("course_id, course_code, course_name").eq("is_active", true).order("course_code"),
+        supabase.from("program").select("program_id, name, code").eq("is_deleted", false).eq("is_active", true).order("name"),
+        supabase.from("courses").select("course_id, course_code, course_name, units").eq("is_active", true).order("course_code"),
       ]);
       const sys = syRes.data || [];
       setSchoolYears(sys);
       setPrograms(progRes.data || []);
       setCourses(courseRes.data || []);
-      // Default filter to active SY
       const active = sys.find(s => s.is_active);
-      if (active) { setFilterSy(active.sy_id); setForm(p => ({ ...p, syId: active.sy_id })); }
+      if (active) {
+        setFilterSy(active.sy_id);
+        setSectionForm(p => ({ ...p, syId: active.sy_id }));
+      }
     }
     load();
   }, []);
 
-  // ── Load offerings ────────────────────────────────────────────────────────
-  const loadOfferings = useCallback(async () => {
+  // ── Load sections ─────────────────────────────────────────────────────────
+  const loadSections = useCallback(async () => {
     if (!filterSy) return;
     setLoading(true);
     let q = supabase
-      .from("course_offerings")
-      .select(`
-        offering_id, course_id, sy_id, term, year_level, program_id,
-        max_students, is_active, created_at,
-        courses(course_code, course_name),
-        school_years(label),
-        program(name)
-      `)
+      .from("v_course_sections")
+      .select("*")
       .eq("sy_id", filterSy)
       .eq("is_active", true);
-    if (filterTerm) q = q.eq("term", filterTerm);
-    const { data, error } = await q.order("created_at", { ascending: false });
-    if (!error) setOfferings(data || []);
+    if (filterTerm)   q = q.eq("term", filterTerm);
+    if (filterCourse) q = q.eq("course_id", filterCourse);
+    const { data, error } = await q.order("course_code").order("section_code");
+    if (!error) setSections(data || []);
     setLoading(false);
-  }, [filterSy, filterTerm]);
+  }, [filterSy, filterTerm, filterCourse]);
 
-  useEffect(() => { loadOfferings(); }, [loadOfferings]);
+  useEffect(() => { loadSections(); }, [loadSections]);
 
-  // ── Create offering ───────────────────────────────────────────────────────
-  const handleCreate = async () => {
-    if (!form.courseId || !form.syId || !form.term) {
-      showErr("Course, School Year and Term are required."); return;
+  // ── Load program mappings ─────────────────────────────────────────────────
+  const loadMappings = useCallback(async () => {
+    let q = supabase
+      .from("course_program_map")
+      .select("id, course_id, program_id, year_level, semester, courses(course_code, course_name), program(name, code)");
+    if (mapFilter.courseId)  q = q.eq("course_id", mapFilter.courseId);
+    if (mapFilter.programId) q = q.eq("program_id", mapFilter.programId);
+    const { data, error } = await q.order("id", { ascending: false });
+    if (!error) setMappings(data || []);
+  }, [mapFilter]);
+
+  useEffect(() => { if (activeTab === "mappings") loadMappings(); }, [loadMappings, activeTab]);
+
+  // ── Section: next available section code ─────────────────────────────────
+  const nextSectionCode = (courseId, syId, term) => {
+    const existing = sections.filter(
+      s => s.course_id === courseId && s.sy_id === syId && s.term === term
+    );
+    const used = new Set(existing.map(s => s.section_code));
+    for (const letter of "ABCDEFGHIJKLMNOPQRSTUVWXYZ") {
+      if (!used.has(letter)) return letter;
+    }
+    return "";
+  };
+
+  // ── Section: save (create or update) ─────────────────────────────────────
+  const handleSaveSection = async () => {
+    const { courseId, syId, term, sectionCode, teacherName, schedule, room, maxStudents } = sectionForm;
+    if (!courseId || !syId || !term || !sectionCode) {
+      showErr("Course, School Year, Term and Section Code are required."); return;
     }
     setSaving(true);
-    const { error } = await supabase.from("course_offerings").insert({
-      course_id:    form.courseId,
-      sy_id:        form.syId,
-      term:         form.term,
-      year_level:   form.yearLevel || null,
-      program_id:   form.programId ? Number(form.programId) : null,
-      max_students: Number(form.maxStudents) || 40,
-    });
+    const payload = {
+      course_id:    courseId,
+      sy_id:        Number(syId),
+      term,
+      section_code: sectionCode.toUpperCase(),
+      teacher_name: teacherName || null,
+      schedule:     schedule || null,
+      room:         room || null,
+      max_students: Number(maxStudents) || 40,
+    };
+
+    let error;
+    if (editingSection) {
+      ({ error } = await supabase.from("course_sections").update(payload).eq("section_id", editingSection));
+    } else {
+      ({ error } = await supabase.from("course_sections").insert(payload));
+    }
     setSaving(false);
     if (error) { showErr(error.message); return; }
-    setForm(emptyForm);
-    setShowForm(false);
-    await loadOfferings();
-    showOk("Course offering created.");
+
+    setSectionForm({ ...emptySection, syId: filterSy });
+    setShowSectionForm(false);
+    setEditingSection(null);
+    await loadSections();
+    showOk(editingSection ? "Section updated." : "Section created.");
   };
 
-  // ── Auto-assign students ──────────────────────────────────────────────────
-  const handleAutoAssign = async (offering) => {
-    setAssigning(offering.offering_id);
-    try {
-      // Find eligible students: active, role=student, matching year_level if set
-      let q = supabase.from("users").select("user_id").eq("role", "student").eq("is_active", true);
+  const handleEditSection = (s) => {
+    setSectionForm({
+      courseId:    s.course_id,
+      syId:        String(s.sy_id),
+      term:        s.term,
+      sectionCode: s.section_code,
+      teacherName: s.teacher_name || "",
+      schedule:    s.schedule || "",
+      room:        s.room || "",
+      maxStudents: s.max_students,
+    });
+    setEditingSection(s.section_id);
+    setShowSectionForm(true);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
 
-      // Get students already enrolled in this course
-      const { data: existing } = await supabase
-        .from("student_course_assignments")
-        .select("student_id")
-        .eq("course_id", offering.course_id);
-      const alreadyIn = new Set((existing || []).map(r => r.student_id));
+  const handleDeleteSection = async (sectionId) => {
+    if (!confirm("Remove this section? Students currently enrolled will be unaffected but no new assignments can be made.")) return;
+    await supabase.from("course_sections").update({ is_active: false }).eq("section_id", sectionId);
+    await loadSections();
+    showOk("Section removed.");
+  };
 
-      // Filter by year level if set
-      if (offering.year_level) {
-        const { data: studs } = await supabase
-          .from("students")
-          .select("user_id")
-          .eq("year_level", offering.year_level);
-        const yearLevelIds = new Set((studs || []).map(s => s.user_id));
-        q = supabase.from("users").select("user_id")
-          .eq("role", "student")
-          .eq("is_active", true)
-          .in("user_id", [...yearLevelIds]);
-      }
-
-      const { data: eligibleUsers } = await q;
-      const toEnroll = (eligibleUsers || [])
-        .map(u => u.user_id)
-        .filter(id => !alreadyIn.has(id));
-
-      let assigned = 0;
-      if (toEnroll.length > 0) {
-        const rows = toEnroll.map(sid => ({
-          student_id:        sid,
-          course_id:         offering.course_id,
-          enrollment_status: "Enrolled",
-          academic_year:     offering.school_years?.label ?? "",
-        }));
-        const { data: ins } = await supabase
-          .from("student_course_assignments")
-          .upsert(rows, { onConflict: "student_id,course_id", ignoreDuplicates: true })
-          .select("assignment_id");
-        assigned = ins?.length ?? 0;
-      }
-      const skipped = toEnroll.length === 0 ? (existing?.length ?? 0) : (toEnroll.length - assigned);
-
-      setAssignResult({
-        courseCode: offering.courses?.course_code,
-        assigned,
-        skipped,
-        total: (eligibleUsers || []).length,
-      });
-      await loadOfferings();
-    } catch (err) {
-      showErr("Auto-assign failed: " + err.message);
+  // ── Program mapping: save ─────────────────────────────────────────────────
+  const handleSaveMapping = async () => {
+    const { courseId, programId, yearLevel, semester } = mappingForm;
+    if (!courseId || !programId || !yearLevel || !semester) {
+      showErr("All mapping fields are required."); return;
     }
-    setAssigning(null);
+    setSaving(true);
+    const { error } = await supabase.from("course_program_map").insert({
+      course_id:  courseId,
+      program_id: Number(programId),
+      year_level: yearLevel,
+      semester,
+    });
+    setSaving(false);
+    if (error) {
+      showErr(error.code === "23505" ? "This mapping already exists." : error.message);
+      return;
+    }
+    setMappingForm(emptyMapping);
+    setShowMappingForm(false);
+    await loadMappings();
+    showOk("Mapping added.");
   };
 
-  // ── Delete offering ───────────────────────────────────────────────────────
-  const handleDelete = async (offeringId) => {
-    if (!confirm("Remove this course offering?")) return;
-    await supabase.from("course_offerings").update({ is_active: false }).eq("offering_id", offeringId);
-    await loadOfferings();
-    showOk("Offering removed.");
+  const handleDeleteMapping = async (id) => {
+    if (!confirm("Remove this program mapping?")) return;
+    await supabase.from("course_program_map").delete().eq("id", id);
+    await loadMappings();
+    showOk("Mapping removed.");
   };
 
-  const activeSyLabel = schoolYears.find(s => s.sy_id === filterSy)?.label ?? "";
+  // ── Group sections by course for display ──────────────────────────────────
+  const sectionsByCourse = sections.reduce((acc, s) => {
+    const key = s.course_id;
+    if (!acc[key]) acc[key] = { course_code: s.course_code, course_name: s.course_name, units: s.units, sections: [] };
+    acc[key].sections.push(s);
+    return acc;
+  }, {});
 
+  // ─────────────────────────────────────────────────────────────────────────
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
-      <TopBar title="Course Offerings" icon="📅"
-        right={<Btn onClick={() => setShowForm(v => !v)}>{showForm ? "Cancel" : "+ Add Offering"}</Btn>}
+      <TopBar title="Course Sections & Program Maps" icon="📅"
+        right={
+          <div style={{ display: "flex", gap: 8 }}>
+            <Btn variant={activeTab === "sections" ? "primary" : "ghost"} onClick={() => setActiveTab("sections")}>Sections</Btn>
+            <Btn variant={activeTab === "mappings" ? "primary" : "ghost"} onClick={() => setActiveTab("mappings")}>Program Maps</Btn>
+          </div>
+        }
       />
 
       {/* Toast */}
-      {(toast || toastErr) && (
+      {toast.msg && (
         <div style={{ padding: "10px 20px 0" }}>
           <div style={{
-            background: toast ? "rgba(16,185,129,.12)" : "rgba(239,68,68,.12)",
-            border: `1px solid ${toast ? "rgba(16,185,129,.3)" : "rgba(239,68,68,.3)"}`,
+            background: toast.err ? "rgba(239,68,68,.12)" : "rgba(16,185,129,.12)",
+            border: `1px solid ${toast.err ? "rgba(239,68,68,.3)" : "rgba(16,185,129,.3)"}`,
             borderRadius: 8, padding: "9px 14px",
-            color: toast ? "#34d399" : "#f87171", fontSize: 13, fontWeight: 600,
+            color: toast.err ? "#f87171" : "#34d399", fontSize: 13, fontWeight: 600,
           }}>
-            {toast || toastErr}
+            {toast.msg}
           </div>
         </div>
       )}
 
-      {/* Auto-assign result banner */}
-      {assignResult && (
-        <div style={{ margin: "10px 20px 0", background: "rgba(59,130,246,.1)", border: "1px solid rgba(59,130,246,.25)", borderRadius: 8, padding: "12px 16px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <div>
-            <span style={{ fontWeight: 800, color: "#60a5fa", marginRight: 8 }}>✓ Auto-assign complete for {assignResult.courseCode}</span>
-            <span style={{ fontSize: 13, color: "#94a3b8" }}>
-              {assignResult.assigned} enrolled · {assignResult.skipped} already enrolled / skipped
-            </span>
-          </div>
-          <button onClick={() => setAssignResult(null)} style={{ background: "none", border: "none", color: "#475569", cursor: "pointer", fontSize: 18 }}>×</button>
-        </div>
-      )}
-
-      {/* Create form */}
-      {showForm && (
-        <div style={{ padding: "14px 20px", background: "#1e293b", borderBottom: "1px solid #334155" }}>
-          <div style={{ fontWeight: 700, fontSize: 13, color: "#f1f5f9", marginBottom: 12 }}>New Course Offering</div>
-          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end" }}>
-            <FF label="Course *" style={{ flex: "0 0 220px" }}>
-              <Sel value={form.courseId} onChange={e => setForm(p => ({ ...p, courseId: e.target.value }))}>
-                <option value="">Select course…</option>
-                {courses.map(c => (
-                  <option key={c.course_id} value={c.course_id}>{c.course_code} — {c.course_name}</option>
-                ))}
-              </Sel>
-            </FF>
-            <FF label="School Year *" style={{ flex: "0 0 160px" }}>
-              <Sel value={form.syId} onChange={e => setForm(p => ({ ...p, syId: e.target.value }))}>
-                <option value="">Select SY…</option>
-                {schoolYears.map(s => (
-                  <option key={s.sy_id} value={s.sy_id}>{s.label}{s.is_active ? " ★" : ""}</option>
-                ))}
-              </Sel>
-            </FF>
-            <FF label="Term *" style={{ flex: "0 0 140px" }}>
-              <Sel value={form.term} onChange={e => setForm(p => ({ ...p, term: e.target.value }))}>
-                {TERMS.map(t => <option key={t} value={t}>{t}</option>)}
-              </Sel>
-            </FF>
-            <FF label="Year Level (optional)" style={{ flex: "0 0 150px" }}>
-              <Sel value={form.yearLevel} onChange={e => setForm(p => ({ ...p, yearLevel: e.target.value }))}>
-                <option value="">All levels</option>
-                {YEAR_LEVELS.map(y => <option key={y} value={y}>{y}</option>)}
-              </Sel>
-            </FF>
-            <FF label="Program (optional)" style={{ flex: "0 0 180px" }}>
-              <Sel value={form.programId} onChange={e => setForm(p => ({ ...p, programId: e.target.value }))}>
-                <option value="">All programs</option>
-                {programs.map(p => <option key={p.program_id} value={p.program_id}>{p.name}</option>)}
-              </Sel>
-            </FF>
-            <FF label="Max Students" style={{ flex: "0 0 110px" }}>
-              <Input type="number" min={1} value={form.maxStudents}
-                onChange={e => setForm(p => ({ ...p, maxStudents: e.target.value }))} />
-            </FF>
-            <Btn onClick={handleCreate} disabled={saving} variant="success">
-              {saving ? "Saving…" : "Add Offering"}
+      {/* ════════════════════════════════════════════════════════
+          TAB: SECTIONS
+      ════════════════════════════════════════════════════════ */}
+      {activeTab === "sections" && (
+        <>
+          {/* Add/Edit section form */}
+          <div style={{ padding: "10px 20px 0", display: "flex", justifyContent: "flex-end" }}>
+            <Btn onClick={() => {
+              if (showSectionForm && editingSection) { setEditingSection(null); setSectionForm({ ...emptySection, syId: filterSy }); }
+              setShowSectionForm(v => !v);
+            }}>
+              {showSectionForm ? "Cancel" : "+ Add Section"}
             </Btn>
           </div>
-        </div>
-      )}
 
-      {/* Filters */}
-      <div style={{ padding: "10px 20px", borderBottom: "1px solid #1e293b", display: "flex", gap: 12, alignItems: "center" }}>
-        <Sel value={filterSy} onChange={e => setFilterSy(e.target.value)} style={{ width: 180 }}>
-          <option value="">All School Years</option>
-          {schoolYears.map(s => <option key={s.sy_id} value={s.sy_id}>{s.label}{s.is_active ? " ★" : ""}</option>)}
-        </Sel>
-        <Sel value={filterTerm} onChange={e => setFilterTerm(e.target.value)} style={{ width: 150 }}>
-          <option value="">All Terms</option>
-          {TERMS.map(t => <option key={t} value={t}>{t}</option>)}
-        </Sel>
-        {activeSyLabel && <span style={{ fontSize: 12, color: "#64748b" }}>Showing: {activeSyLabel}</span>}
-        <div style={{ marginLeft: "auto", fontSize: 12, color: "#475569" }}>{offerings.length} offering{offerings.length !== 1 ? "s" : ""}</div>
-      </div>
-
-      {/* Offerings grid */}
-      <div style={{ flex: 1, overflowY: "auto", padding: 20 }}>
-        {loading && <div style={{ color: "#475569", textAlign: "center", marginTop: 40 }}>Loading…</div>}
-        {!loading && offerings.length === 0 && (
-          <div style={{ color: "#475569", textAlign: "center", marginTop: 60, fontSize: 14 }}>
-            No offerings for this filter. Add one above.
-          </div>
-        )}
-
-        {/* Group by term */}
-        {!loading && TERMS.filter(t => !filterTerm || t === filterTerm).map(term => {
-          const group = offerings.filter(o => o.term === term);
-          if (!group.length) return null;
-          const { bg, text } = TERM_COLOR[term];
-          return (
-            <div key={term} style={{ marginBottom: 28 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
-                <span style={{ background: bg, color: text, padding: "3px 12px", borderRadius: 6, fontSize: 12, fontWeight: 800 }}>{term}</span>
-                <span style={{ fontSize: 12, color: "#475569" }}>{group.length} course{group.length !== 1 ? "s" : ""}</span>
+          {showSectionForm && (
+            <div style={{ padding: "14px 20px", background: "#1e293b", borderBottom: "1px solid #334155" }}>
+              <div style={{ fontWeight: 700, fontSize: 13, color: "#f1f5f9", marginBottom: 12 }}>
+                {editingSection ? "Edit Section" : "New Section"}
               </div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 12 }}>
-                {group.map(o => {
-                  const enrolledCount = o._enrolledCount ?? 0;
-                  const pct = Math.round((enrolledCount / (o.max_students || 40)) * 100);
-                  const isAssigning = assigning === o.offering_id;
-                  return (
-                    <div key={o.offering_id} style={{ background: "#1e293b", border: "1px solid #334155", borderRadius: 10, padding: "14px 16px" }}>
-                      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 8 }}>
-                        <div>
-                          <div style={{ fontWeight: 800, fontSize: 14, color: "#f1f5f9" }}>{o.courses?.course_code}</div>
-                          <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 2 }}>{o.courses?.course_name}</div>
-                        </div>
-                        <button onClick={() => handleDelete(o.offering_id)}
-                          style={{ background: "none", border: "none", color: "#475569", cursor: "pointer", fontSize: 16, lineHeight: 1 }}
-                          title="Remove offering"
-                        >×</button>
-                      </div>
-
-                      <div style={{ display: "flex", gap: 6, marginBottom: 10, flexWrap: "wrap" }}>
-                        {o.year_level && <span style={{ background: "rgba(16,185,129,.12)", color: "#34d399", padding: "1px 7px", borderRadius: 4, fontSize: 11, fontWeight: 700 }}>{o.year_level}</span>}
-                        {o.program?.name && <span style={{ background: "rgba(99,102,241,.12)", color: "#a5b4fc", padding: "1px 7px", borderRadius: 4, fontSize: 11, fontWeight: 700 }}>{o.program?.name}</span>}
-                        <span style={{ background: "#0f172a", color: "#64748b", padding: "1px 7px", borderRadius: 4, fontSize: 11 }}>Max {o.max_students}</span>
-                      </div>
-
-                      <Btn
-                        variant="info"
-                        style={{ width: "100%", justifyContent: "center", background: "rgba(59,130,246,.15)", color: "#60a5fa", border: "1px solid rgba(59,130,246,.3)" }}
-                        onClick={() => handleAutoAssign(o)}
-                        disabled={isAssigning}
-                      >
-                        {isAssigning ? "⏳ Assigning…" : "⚡ Auto-Assign Students"}
-                      </Btn>
-                    </div>
-                  );
-                })}
+              <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end" }}>
+                <FF label="Course *" style={{ flex: "0 0 200px" }}>
+                  <Sel value={sectionForm.courseId} onChange={e => {
+                    const cid = e.target.value;
+                    const code = nextSectionCode(cid, sectionForm.syId, sectionForm.term);
+                    setSectionForm(p => ({ ...p, courseId: cid, sectionCode: code }));
+                  }}>
+                    <option value="">Select course…</option>
+                    {courses.map(c => (
+                      <option key={c.course_id} value={c.course_id}>{c.course_code} — {c.course_name}</option>
+                    ))}
+                  </Sel>
+                </FF>
+                <FF label="School Year *" style={{ flex: "0 0 150px" }}>
+                  <Sel value={sectionForm.syId} onChange={e => setSectionForm(p => ({ ...p, syId: e.target.value }))}>
+                    <option value="">Select SY…</option>
+                    {schoolYears.map(s => (
+                      <option key={s.sy_id} value={s.sy_id}>{s.label}{s.is_active ? " ★" : ""}</option>
+                    ))}
+                  </Sel>
+                </FF>
+                <FF label="Term *" style={{ flex: "0 0 130px" }}>
+                  <Sel value={sectionForm.term} onChange={e => {
+                    const term = e.target.value;
+                    const code = nextSectionCode(sectionForm.courseId, sectionForm.syId, term);
+                    setSectionForm(p => ({ ...p, term, sectionCode: code }));
+                  }}>
+                    {TERMS.map(t => <option key={t} value={t}>{t}</option>)}
+                  </Sel>
+                </FF>
+                <FF label="Section Code *" style={{ flex: "0 0 100px" }}>
+                  <Input value={sectionForm.sectionCode} maxLength={4}
+                    onChange={e => setSectionForm(p => ({ ...p, sectionCode: e.target.value.toUpperCase() }))}
+                    placeholder="A" />
+                </FF>
+                <FF label="Teacher" style={{ flex: "0 0 180px" }}>
+                  <Input value={sectionForm.teacherName} placeholder="Prof. Juan dela Cruz"
+                    onChange={e => setSectionForm(p => ({ ...p, teacherName: e.target.value }))} />
+                </FF>
+                <FF label="Schedule" style={{ flex: "0 0 170px" }}>
+                  <Input value={sectionForm.schedule} placeholder="MWF 8:00–9:00AM"
+                    onChange={e => setSectionForm(p => ({ ...p, schedule: e.target.value }))} />
+                </FF>
+                <FF label="Room" style={{ flex: "0 0 110px" }}>
+                  <Input value={sectionForm.room} placeholder="CB305"
+                    onChange={e => setSectionForm(p => ({ ...p, room: e.target.value }))} />
+                </FF>
+                <FF label="Max Students" style={{ flex: "0 0 110px" }}>
+                  <Input type="number" min={1} value={sectionForm.maxStudents}
+                    onChange={e => setSectionForm(p => ({ ...p, maxStudents: e.target.value }))} />
+                </FF>
+                <Btn onClick={handleSaveSection} disabled={saving} variant="success">
+                  {saving ? "Saving…" : editingSection ? "Update" : "Add Section"}
+                </Btn>
               </div>
             </div>
-          );
-        })}
-      </div>
+          )}
+
+          {/* Filters */}
+          <div style={{ padding: "10px 20px", borderBottom: "1px solid #1e293b", display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+            <Sel value={filterSy} onChange={e => setFilterSy(e.target.value)} style={{ width: 180 }}>
+              <option value="">All School Years</option>
+              {schoolYears.map(s => <option key={s.sy_id} value={s.sy_id}>{s.label}{s.is_active ? " ★" : ""}</option>)}
+            </Sel>
+            <Sel value={filterTerm} onChange={e => setFilterTerm(e.target.value)} style={{ width: 140 }}>
+              <option value="">All Terms</option>
+              {TERMS.map(t => <option key={t} value={t}>{t}</option>)}
+            </Sel>
+            <Sel value={filterCourse} onChange={e => setFilterCourse(e.target.value)} style={{ width: 200 }}>
+              <option value="">All Courses</option>
+              {courses.map(c => <option key={c.course_id} value={c.course_id}>{c.course_code} — {c.course_name}</option>)}
+            </Sel>
+            <div style={{ marginLeft: "auto", fontSize: 12, color: "#475569" }}>
+              {sections.length} section{sections.length !== 1 ? "s" : ""} across {Object.keys(sectionsByCourse).length} course{Object.keys(sectionsByCourse).length !== 1 ? "s" : ""}
+            </div>
+          </div>
+
+          {/* Sections grouped by course */}
+          <div style={{ flex: 1, overflowY: "auto", padding: 20 }}>
+            {loading && <div style={{ color: "#475569", textAlign: "center", marginTop: 40 }}>Loading…</div>}
+            {!loading && Object.keys(sectionsByCourse).length === 0 && (
+              <div style={{ color: "#475569", textAlign: "center", marginTop: 60, fontSize: 14 }}>
+                No sections found. Add one above.
+              </div>
+            )}
+
+            {!loading && Object.entries(sectionsByCourse).map(([courseId, group]) => (
+              <div key={courseId} style={{ marginBottom: 24 }}>
+                {/* Course header */}
+                <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 10, paddingBottom: 6, borderBottom: "1px solid #1e293b" }}>
+                  <span style={{ fontWeight: 800, fontSize: 14, color: "#f1f5f9" }}>{group.course_code}</span>
+                  <span style={{ fontSize: 12, color: "#94a3b8" }}>{group.course_name}</span>
+                  <span style={{ fontSize: 11, color: "#475569", marginLeft: "auto" }}>{group.units} units</span>
+                  <Badge color="info">{group.sections.length} section{group.sections.length !== 1 ? "s" : ""}</Badge>
+                </div>
+
+                {/* Sections grid */}
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 10 }}>
+                  {group.sections.map(s => {
+                    const pct = Math.round((s.enrolled_count / s.max_students) * 100);
+                    const { bg, text: tcolor } = TERM_COLOR[s.term] || TERM_COLOR.Prelim;
+                    const isFull = s.enrolled_count >= s.max_students;
+                    return (
+                      <div key={s.section_id} style={{ background: "#1e293b", border: "1px solid #334155", borderRadius: 10, padding: "12px 14px" }}>
+                        {/* Section header row */}
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                            <span style={{ background: "#0f172a", border: "1px solid #334155", borderRadius: 5, padding: "2px 8px", fontSize: 13, fontWeight: 800, color: "#f1f5f9" }}>
+                              Section {s.section_code}
+                            </span>
+                            <span style={{ background: bg, color: tcolor, padding: "1px 7px", borderRadius: 4, fontSize: 11, fontWeight: 700 }}>{s.term}</span>
+                          </div>
+                          <div style={{ display: "flex", gap: 4 }}>
+                            <button onClick={() => handleEditSection(s)}
+                              style={{ background: "rgba(99,102,241,.15)", border: "none", color: "#a5b4fc", borderRadius: 5, padding: "3px 8px", cursor: "pointer", fontSize: 12 }}>
+                              Edit
+                            </button>
+                            <button onClick={() => handleDeleteSection(s.section_id)}
+                              style={{ background: "none", border: "none", color: "#475569", cursor: "pointer", fontSize: 16, lineHeight: 1 }}>×</button>
+                          </div>
+                        </div>
+
+                        {/* Teacher & Schedule */}
+                        <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 6 }}>
+                          {s.teacher_name
+                            ? <div>👤 {s.teacher_name}</div>
+                            : <div style={{ color: "#475569", fontStyle: "italic" }}>No teacher assigned</div>}
+                          {s.schedule && <div>🕐 {s.schedule}</div>}
+                          {s.room    && <div>📍 {s.room}</div>}
+                        </div>
+
+                        {/* Enrollment bar */}
+                        <div style={{ marginTop: 8 }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "#475569", marginBottom: 3 }}>
+                            <span>{s.enrolled_count} enrolled</span>
+                            <span style={{ color: isFull ? "#f87171" : "#475569" }}>Max {s.max_students}</span>
+                          </div>
+                          <div style={{ height: 4, background: "#0f172a", borderRadius: 2 }}>
+                            <div style={{
+                              height: "100%", borderRadius: 2,
+                              width: `${Math.min(pct, 100)}%`,
+                              background: isFull ? "#f87171" : pct > 80 ? "#fbbf24" : "#34d399",
+                            }} />
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
+      {/* ════════════════════════════════════════════════════════
+          TAB: PROGRAM MAPS
+          Controls which course belongs to which program / year / semester.
+          NSTP can map to BSCS 1st Year 1st Sem AND BSBA 1st Year 1st Sem, etc.
+      ════════════════════════════════════════════════════════ */}
+      {activeTab === "mappings" && (
+        <>
+          <div style={{ padding: "10px 20px 0", display: "flex", justifyContent: "flex-end" }}>
+            <Btn onClick={() => setShowMappingForm(v => !v)}>
+              {showMappingForm ? "Cancel" : "+ Add Mapping"}
+            </Btn>
+          </div>
+
+          {showMappingForm && (
+            <div style={{ padding: "14px 20px", background: "#1e293b", borderBottom: "1px solid #334155" }}>
+              <div style={{ fontWeight: 700, fontSize: 13, color: "#f1f5f9", marginBottom: 10 }}>
+                New Course → Program Mapping
+              </div>
+              <div style={{ fontSize: 12, color: "#64748b", marginBottom: 12 }}>
+                Use this to assign a shared course (e.g. NSTP, PE) to multiple programs.
+              </div>
+              <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end" }}>
+                <FF label="Course *" style={{ flex: "0 0 220px" }}>
+                  <Sel value={mappingForm.courseId} onChange={e => setMappingForm(p => ({ ...p, courseId: e.target.value }))}>
+                    <option value="">Select course…</option>
+                    {courses.map(c => (
+                      <option key={c.course_id} value={c.course_id}>{c.course_code} — {c.course_name}</option>
+                    ))}
+                  </Sel>
+                </FF>
+                <FF label="Program *" style={{ flex: "0 0 220px" }}>
+                  <Sel value={mappingForm.programId} onChange={e => setMappingForm(p => ({ ...p, programId: e.target.value }))}>
+                    <option value="">Select program…</option>
+                    {programs.map(p => (
+                      <option key={p.program_id} value={p.program_id}>{p.code} — {p.name}</option>
+                    ))}
+                  </Sel>
+                </FF>
+                <FF label="Year Level *" style={{ flex: "0 0 140px" }}>
+                  <Sel value={mappingForm.yearLevel} onChange={e => setMappingForm(p => ({ ...p, yearLevel: e.target.value }))}>
+                    <option value="">Select year…</option>
+                    {YEAR_LEVELS.map(y => <option key={y} value={y}>{y}</option>)}
+                  </Sel>
+                </FF>
+                <FF label="Semester *" style={{ flex: "0 0 150px" }}>
+                  <Sel value={mappingForm.semester} onChange={e => setMappingForm(p => ({ ...p, semester: e.target.value }))}>
+                    <option value="">Select semester…</option>
+                    {SEMESTERS.map(s => <option key={s} value={s}>{s}</option>)}
+                  </Sel>
+                </FF>
+                <Btn onClick={handleSaveMapping} disabled={saving} variant="success">
+                  {saving ? "Saving…" : "Add Mapping"}
+                </Btn>
+              </div>
+            </div>
+          )}
+
+          {/* Mapping filters */}
+          <div style={{ padding: "10px 20px", borderBottom: "1px solid #1e293b", display: "flex", gap: 12, alignItems: "center" }}>
+            <Sel value={mapFilter.courseId} onChange={e => setMapFilter(p => ({ ...p, courseId: e.target.value }))} style={{ width: 220 }}>
+              <option value="">All Courses</option>
+              {courses.map(c => <option key={c.course_id} value={c.course_id}>{c.course_code}</option>)}
+            </Sel>
+            <Sel value={mapFilter.programId} onChange={e => setMapFilter(p => ({ ...p, programId: e.target.value }))} style={{ width: 220 }}>
+              <option value="">All Programs</option>
+              {programs.map(p => <option key={p.program_id} value={p.program_id}>{p.code} — {p.name}</option>)}
+            </Sel>
+            <div style={{ marginLeft: "auto", fontSize: 12, color: "#475569" }}>{mappings.length} mapping{mappings.length !== 1 ? "s" : ""}</div>
+          </div>
+
+          {/* Mappings list */}
+          <div style={{ flex: 1, overflowY: "auto", padding: 20 }}>
+            {mappings.length === 0 && (
+              <div style={{ color: "#475569", textAlign: "center", marginTop: 60, fontSize: 14 }}>
+                No mappings yet. Add one above to assign a course to a program.
+              </div>
+            )}
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, maxWidth: 860 }}>
+              {mappings.map(m => (
+                <div key={m.id} style={{ background: "#1e293b", border: "1px solid #334155", borderRadius: 8, padding: "10px 14px", display: "flex", alignItems: "center", gap: 14 }}>
+                  <div style={{ minWidth: 80, fontWeight: 800, fontSize: 13, color: "#f1f5f9" }}>
+                    {m.courses?.course_code}
+                  </div>
+                  <div style={{ fontSize: 12, color: "#94a3b8", flex: 1 }}>
+                    {m.courses?.course_name}
+                  </div>
+                  <span style={{ background: "rgba(99,102,241,.12)", color: "#a5b4fc", padding: "2px 9px", borderRadius: 4, fontSize: 11, fontWeight: 700, whiteSpace: "nowrap" }}>
+                    {m.program?.code} — {m.program?.name}
+                  </span>
+                  <span style={{ background: "rgba(16,185,129,.1)", color: "#34d399", padding: "2px 9px", borderRadius: 4, fontSize: 11, fontWeight: 700, whiteSpace: "nowrap" }}>
+                    {m.year_level}
+                  </span>
+                  <span style={{ background: "rgba(59,130,246,.1)", color: "#60a5fa", padding: "2px 9px", borderRadius: 4, fontSize: 11, fontWeight: 700, whiteSpace: "nowrap" }}>
+                    {m.semester}
+                  </span>
+                  <button onClick={() => handleDeleteMapping(m.id)}
+                    style={{ background: "none", border: "none", color: "#475569", cursor: "pointer", fontSize: 16, marginLeft: "auto" }}>×</button>
+                </div>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }

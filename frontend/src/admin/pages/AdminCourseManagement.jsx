@@ -2,29 +2,29 @@
  * AdminCourseManagement.jsx
  * FOLDER: src/admin/pages/AdminCourseManagement.jsx
  *
- * Replaces AdminDepartments + AdminPrograms + AdminCreateCourses
- * with a single unified three-level drill-down:
+ * Three-level drill-down: Departments → Programs → Courses
  *
- *   Departments → Programs (of selected dept) → Courses (of selected program)
- *                                                    ↓
- *                                          Teacher & Students panel
- *
- * Navigation breadcrumb at top shows current position.
- * Each level shows its own list + create/edit form.
+ * UPDATED for new course structure:
+ *   - courses table no longer has program_id, schedule, room, year_level, semester
+ *   - courses now loaded via course_program_map (many-to-many)
+ *   - year_level + semester stored in course_program_map
+ *   - schedule / room / teacher → managed in AdminCourseSections
+ *   - student enrollment → managed in AdminBulkEnroll
  */
 import React, { useState, useEffect, useCallback } from "react";
 import { supabase } from "../../supabaseClient";
 import { departmentApi, programApi } from "../../lib/api";
-import { Badge, Btn, Input, Sel, FF, Toast } from "../../components/ui";
+import { Badge, Btn, Input, Sel, FF } from "../../components/ui";
 import LMSGrid from "../../components/LMSGrid";
 import TopBar  from "../../components/TopBar";
 
-// ─── Shared helpers ───────────────────────────────────────────────────────────
+// ─── Shared styles ────────────────────────────────────────────────────────────
 const S = {
   pane:    { width: 300, borderRight: "1px solid #334155", background: "#1e293b", padding: "14px 16px", display: "flex", flexDirection: "column", gap: 10, overflowY: "auto", flexShrink: 0 },
   grid:    { flex: 1, padding: "14px 16px", display: "flex", flexDirection: "column", overflow: "hidden", background: "#0f172a", gap: 8 },
   label:   { fontSize: 10, fontWeight: 800, color: "#475569", textTransform: "uppercase", letterSpacing: "0.07em" },
   section: { borderTop: "1px solid #334155", paddingTop: 10, marginTop: 4 },
+  hint:    { fontSize: 11, color: "#475569", fontStyle: "italic", lineHeight: 1.5 },
 };
 
 const PaneHeader = ({ title, sub }) => (
@@ -36,9 +36,9 @@ const PaneHeader = ({ title, sub }) => (
 
 const emptyDept   = { code: "", name: "", room: "", email: "", phone: "", description: "" };
 const emptyProg   = { code: "", name: "", description: "" };
-const emptyCourse = { code: "", name: "", units: "3", schedule: "", yearLevel: "1st Year", semester: "1st Semester", room: "" };
+// schedule / room removed — those live in course_sections now
+const emptyCourse = { code: "", name: "", units: "3", yearLevel: "1st Year", semester: "1st Semester" };
 
-// ─── Delete confirm modal ─────────────────────────────────────────────────────
 function ConfirmModal({ title, message, onConfirm, onCancel }) {
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.6)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }}>
@@ -56,34 +56,27 @@ function ConfirmModal({ title, message, onConfirm, onCancel }) {
 
 // ─── Main component ───────────────────────────────────────────────────────────
 export default function AdminCourseManagement({ courses, setCourses, users, enrollments, setEnrollments }) {
-  const teachers = users.filter(u => u.role === "teacher");
-  const students = users.filter(u => u.role === "student");
 
   // ── Level state ──────────────────────────────────────────────────────────────
-  const [level,       setLevel]       = useState("dept");    // "dept" | "prog" | "course"
+  const [level,       setLevel]       = useState("dept");
   const [selDept,     setSelDept]     = useState(null);
   const [selProg,     setSelProg]     = useState(null);
-  const [selCourse,   setSelCourse]   = useState(null);
 
   // ── Data ─────────────────────────────────────────────────────────────────────
   const [depts,       setDepts]       = useState([]);
   const [progs,       setProgs]       = useState([]);
-  const [progCourses, setProgCourses] = useState([]);  // courses for selected program
+  const [progCourses, setProgCourses] = useState([]);
   const [loading,     setLoading]     = useState(false);
 
   // ── Form state ───────────────────────────────────────────────────────────────
   const [deptForm,    setDeptForm]    = useState(emptyDept);
   const [progForm,    setProgForm]    = useState(emptyProg);
   const [courseForm,  setCourseForm]  = useState(emptyCourse);
-  const [editingId,   setEditingId]   = useState(null);   // id of item being edited
+  const [editingId,   setEditingId]   = useState(null); // course_id UUID when editing
 
   // ── Toast / confirm ───────────────────────────────────────────────────────────
   const [toast,       setToast]       = useState({ msg: "", type: "success" });
-  const [confirmDel,  setConfirmDel]  = useState(null);   // { type, item }
-
-  // ── Enroll / teacher assign ───────────────────────────────────────────────────
-  const [enroll,      setEnroll]      = useState({ studentId: "" });
-  const [teacherSel,  setTeacherSel]  = useState("");
+  const [confirmDel,  setConfirmDel]  = useState(null);
 
   const showToast = (msg, type = "success") => {
     setToast({ msg, type });
@@ -112,67 +105,47 @@ export default function AdminCourseManagement({ courses, setCourses, users, enro
     setLoading(false);
   }, []);
 
+  // Updated: load courses via course_program_map (not courses.program_id)
   const loadCourses = useCallback(async (programId) => {
     setLoading(true);
     try {
-      // 1. Fetch courses (no embedded joins — avoids silent RLS failures on joined tables)
-      const { data: courseData, error: courseErr } = await supabase
-        .from("courses")
-        .select("course_id, course_code, course_name, units, status, is_active, program_id")
+      const { data, error } = await supabase
+        .from("course_program_map")
+        .select(`
+          id,
+          year_level,
+          semester,
+          courses (
+            course_id,
+            course_code,
+            course_name,
+            units,
+            is_active
+          )
+        `)
         .eq("program_id", programId)
-        .eq("is_active", true);
-      if (courseErr) throw new Error(courseErr.message);
+        .order("id", { ascending: true });
 
-      const courseIds = (courseData ?? []).map(c => c.course_id);
+      if (error) throw new Error(error.message);
 
-      // 2. Fetch schedules separately (embedded joins can silently return null under RLS)
-      let schMap = {};  // course_id → schedule row
-      if (courseIds.length) {
-        const { data: schData } = await supabase
-          .from("schedules")
-          .select("schedule_id, course_id, schedule_label, year_level, semester, academic_year, room")
-          .in("course_id", courseIds);
-        (schData ?? []).forEach(row => { schMap[row.course_id] = row; });
-      }
+      const enriched = (data ?? [])
+        .filter(m => m.courses)   // skip any orphaned map rows
+        .map(m => ({
+          _mapId:    m.id,
+          _uuid:     m.courses.course_id,
+          id:        m.courses.course_code,
+          code:      m.courses.course_code,
+          name:      m.courses.course_name,
+          units:     m.courses.units,
+          yearLevel: m.year_level,
+          semester:  m.semester,
+          programId: programId,
+        }));
 
-      // 3. Fetch teacher assignments separately with explicit ORDER so latest wins.
-      let tcaMap = {};
-      if (courseIds.length) {
-        const { data: tcaData } = await supabase
-          .from("teacher_course_assignments")
-          .select("course_id, teacher_id, assigned_at")
-          .in("course_id", courseIds)
-          .order("assigned_at", { ascending: false });
-        (tcaData ?? []).forEach(row => {
-          if (!tcaMap[row.course_id]) tcaMap[row.course_id] = row.teacher_id;
-        });
-      }
-
-      const enriched = (courseData ?? []).map(c => {
-        const sch     = schMap[c.course_id] ?? null;
-        const tId     = tcaMap[c.course_id] ?? null;
-        const teacher = tId ? users.find(u => u._uuid === tId) : null;
-        return {
-          _uuid:       c.course_id,
-          id:          c.course_code,
-          code:        c.course_code,
-          name:        c.course_name,
-          units:       c.units,
-          status:      c.status || "Ongoing",
-          programId:   c.program_id,
-          schedule:    sch?.schedule_label || "",
-          yearLevel:   sch?.year_level     || "",
-          semester:    sch?.semester       || "",
-          room:        sch?.room           || "",
-          _scheduleId: sch?.schedule_id    || null,
-          teacherId:   tId,
-          teacherName: teacher?.fullName   || "Unassigned",
-        };
-      });
       setProgCourses(enriched);
     } catch (e) { showToast(e.message, "error"); }
     setLoading(false);
-  }, [users]);
+  }, []);
 
   useEffect(() => { loadDepts(); }, [loadDepts]);
 
@@ -181,27 +154,27 @@ export default function AdminCourseManagement({ courses, setCourses, users, enro
   // ════════════════════════════════════════════════════════════════════════════
 
   const drillDept = async (dept) => {
-    setSelDept(dept); setSelProg(null); setSelCourse(null);
+    setSelDept(dept); setSelProg(null);
     setEditingId(null); setProgForm(emptyProg); setProgCourses([]);
     setLevel("prog");
     await loadProgs(dept.departmentId);
   };
 
   const drillProg = async (prog) => {
-    setSelProg(prog); setSelCourse(null);
+    setSelProg(prog);
     setEditingId(null); setCourseForm(emptyCourse);
     setLevel("course");
     await loadCourses(prog.programId);
   };
 
   const goBack = () => {
-    if (level === "course") { setLevel("prog"); setSelProg(null); setSelCourse(null); setProgCourses([]); }
+    if (level === "course") { setLevel("prog"); setSelProg(null); setProgCourses([]); }
     if (level === "prog")   { setLevel("dept"); setSelDept(null); setProgs([]); }
     setEditingId(null);
   };
 
   // ════════════════════════════════════════════════════════════════════════════
-  //  DEPARTMENT CRUD
+  //  DEPARTMENT CRUD (unchanged)
   // ════════════════════════════════════════════════════════════════════════════
 
   const saveDept = async () => {
@@ -238,7 +211,7 @@ export default function AdminCourseManagement({ courses, setCourses, users, enro
   };
 
   // ════════════════════════════════════════════════════════════════════════════
-  //  PROGRAM CRUD
+  //  PROGRAM CRUD (unchanged)
   // ════════════════════════════════════════════════════════════════════════════
 
   const saveProg = async () => {
@@ -275,79 +248,87 @@ export default function AdminCourseManagement({ courses, setCourses, users, enro
   };
 
   // ════════════════════════════════════════════════════════════════════════════
-  //  COURSE CRUD
+  //  COURSE CRUD  — updated for new schema
   // ════════════════════════════════════════════════════════════════════════════
 
   const saveCourse = async () => {
-    if (!courseForm.code.trim() || !courseForm.name.trim()) { showToast("Code and Name required.", "error"); return; }
+    if (!courseForm.code.trim() || !courseForm.name.trim()) {
+      showToast("Code and Name required.", "error"); return;
+    }
     try {
       if (editingId) {
-        // Update course row
-        await supabase.from("courses").update({
+        // ── Update course catalog row ────────────────────────────────────────
+        const { error: courseErr } = await supabase.from("courses").update({
           course_code: courseForm.code.trim().toUpperCase(),
           course_name: courseForm.name.trim(),
           units:       parseInt(courseForm.units) || 3,
         }).eq("course_id", editingId);
+        if (courseErr) throw new Error(courseErr.message);
 
-        // Upsert the schedule row — insert if none exists for this course_id,
-        // update in place if one does. Only columns that exist on the schedules table.
-        await supabase.from("schedules").upsert({
-          course_id:      editingId,
-          schedule_label: courseForm.schedule  || null,
-          year_level:     courseForm.yearLevel || null,
-          semester:       courseForm.semester  || null,
-          academic_year:  "2025-2026",
-          room:           courseForm.room      || null,
-        }, { onConflict: "course_id" });
+        // ── Update year_level + semester in course_program_map ───────────────
+        const { error: mapErr } = await supabase
+          .from("course_program_map")
+          .update({ year_level: courseForm.yearLevel, semester: courseForm.semester })
+          .eq("course_id", editingId)
+          .eq("program_id", selProg.programId);
+        if (mapErr) throw new Error(mapErr.message);
 
         setProgCourses(prev => prev.map(c => c._uuid === editingId
-          ? { ...c, code: courseForm.code.trim().toUpperCase(), name: courseForm.name.trim(), units: parseInt(courseForm.units) || 3, schedule: courseForm.schedule, yearLevel: courseForm.yearLevel, semester: courseForm.semester, room: courseForm.room }
+          ? { ...c,
+              code:      courseForm.code.trim().toUpperCase(),
+              name:      courseForm.name.trim(),
+              units:     parseInt(courseForm.units) || 3,
+              yearLevel: courseForm.yearLevel,
+              semester:  courseForm.semester,
+            }
           : c
         ));
         showToast("Course updated.");
         setEditingId(null); setCourseForm(emptyCourse);
-      } else {
-        // Create new course linked to program
-        const { data: newCourse, error } = await supabase.from("courses").insert({
-          course_code: courseForm.code.trim().toUpperCase(),
-          course_name: courseForm.name.trim(),
-          units:       parseInt(courseForm.units) || 3,
-          program_id:  selProg.programId,
-        }).select().single();
-        if (error) { showToast(error.message.includes("unique") ? "Course code already exists." : error.message, "error"); return; }
 
-        let scheduleId = null;
-        if (courseForm.schedule.trim()) {
-          const { data: schRow, error: schErr } = await supabase
-            .from("schedules")
-            .upsert({
-              course_id:      newCourse.course_id,
-              schedule_label: courseForm.schedule.trim(),
-              year_level:     courseForm.yearLevel || null,
-              semester:       courseForm.semester  || null,
-              academic_year:  "2025-2026",
-              room:           courseForm.room      || null,
-            }, { onConflict: "course_id" })
-            .select("schedule_id")
-            .single();
-          if (!schErr && schRow) scheduleId = schRow.schedule_id;
+      } else {
+        // ── Create new course catalog entry ──────────────────────────────────
+        const { data: newCourse, error: courseErr } = await supabase
+          .from("courses")
+          .insert({
+            course_code: courseForm.code.trim().toUpperCase(),
+            course_name: courseForm.name.trim(),
+            units:       parseInt(courseForm.units) || 3,
+          })
+          .select("course_id, course_code, course_name, units")
+          .single();
+        if (courseErr) {
+          showToast(courseErr.message.includes("unique") ? "Course code already exists." : courseErr.message, "error");
+          return;
+        }
+
+        // ── Create course_program_map entry ──────────────────────────────────
+        const { data: mapRow, error: mapErr } = await supabase
+          .from("course_program_map")
+          .insert({
+            course_id:  newCourse.course_id,
+            program_id: selProg.programId,
+            year_level: courseForm.yearLevel,
+            semester:   courseForm.semester,
+          })
+          .select("id")
+          .single();
+        if (mapErr) {
+          // Roll back the course if mapping fails
+          await supabase.from("courses").delete().eq("course_id", newCourse.course_id);
+          showToast(mapErr.message, "error"); return;
         }
 
         const newRow = {
-          _uuid:       newCourse.course_id,
-          id:          newCourse.course_code,
-          code:        newCourse.course_code,
-          name:        newCourse.course_name,
-          units:       newCourse.units,
-          status:      "Ongoing",
-          programId:   selProg.programId,
-          schedule:    courseForm.schedule,
-          yearLevel:   courseForm.yearLevel,
-          semester:    courseForm.semester,
-          room:        courseForm.room,
-          _scheduleId: scheduleId,
-          teacherId:   null,
-          teacherName: "Unassigned",
+          _mapId:    mapRow.id,
+          _uuid:     newCourse.course_id,
+          id:        newCourse.course_code,
+          code:      newCourse.course_code,
+          name:      newCourse.course_name,
+          units:     newCourse.units,
+          yearLevel: courseForm.yearLevel,
+          semester:  courseForm.semester,
+          programId: selProg.programId,
         };
         setProgCourses(prev => [...prev, newRow]);
         setCourses(prev => [...prev, newRow]);
@@ -359,88 +340,34 @@ export default function AdminCourseManagement({ courses, setCourses, users, enro
 
   const deleteCourse = async (course) => {
     try {
-      await Promise.all([
-        supabase.from("materials").delete().eq("course_id", course._uuid),
-        supabase.from("exams").delete().eq("course_id", course._uuid),
-        supabase.from("student_course_assignments").delete().eq("course_id", course._uuid),
-        supabase.from("teacher_course_assignments").delete().eq("course_id", course._uuid),
-      ]);
-      await supabase.from("courses").delete().eq("course_id", course._uuid);
-      setProgCourses(prev => prev.filter(c => c._uuid !== course._uuid));
-      setCourses(prev => prev.filter(c => c._uuid !== course._uuid));
-      setEnrollments(prev => prev.filter(e => e.courseId !== course.id));
-      if (selCourse?._uuid === course._uuid) setSelCourse(null);
-      setConfirmDel(null);
-      showToast("Course deleted.");
-    } catch (e) { showToast(e.message, "error"); }
-  };
-
-  // ── Assign teacher ────────────────────────────────────────────────────────────
-  const assignTeacher = async () => {
-    if (!teacherSel || !selCourse) return;
-    const teacher = teachers.find(t => t.id === teacherSel);
-    if (!teacher) return;
-    try {
-      // Use atomic RPC — INSERT ... ON CONFLICT DO UPDATE in one DB transaction.
-      // This avoids the unique constraint violation that DELETE+INSERT causes.
-      const { error } = await supabase.rpc("assign_teacher_to_course", {
-        p_teacher_id:    teacher._uuid,
-        p_course_id:     selCourse._uuid,
-        p_academic_year: "2025-2026",
-        p_semester:      selCourse.semester || null,
-      });
-      if (error) throw new Error(error.message);
-
-      const updated = { ...selCourse, teacherId: teacher._uuid, teacherName: teacher.fullName };
-      setProgCourses(prev => prev.map(c => c._uuid === selCourse._uuid ? updated : c));
-      setCourses(prev => prev.map(c => c._uuid === selCourse._uuid ? updated : c));
-      setSelCourse(updated);
-      setTeacherSel("");
-      showToast(`Teacher assigned to ${selCourse.code}.`);
-    } catch (e) { showToast(e.message, "error"); }
-  };
-
-  // ── Enroll student ────────────────────────────────────────────────────────────
-  const enrollStudent = async () => {
-    if (!enroll.studentId || !selCourse) return;
-    const student = students.find(s => s.id === enroll.studentId);
-    if (!student) return;
-    if (enrollments.find(e => e.studentId === student.id && e.courseId === selCourse.id)) {
-      showToast("Student already enrolled.", "error"); return;
-    }
-    try {
-      const { error } = await supabase.from("student_course_assignments").upsert({
-        student_id:        student._uuid,
-        course_id:         selCourse._uuid,
-        enrollment_status: "Enrolled",
-        academic_year:     "2025-2026",
-        semester:          selCourse.semester || null,
-      }, { onConflict: "student_id,course_id" });
-      if (error) throw new Error(error.message);
-
-      setEnrollments(prev => [...prev, {
-        studentId: student.id,
-        courseId:  selCourse.id,
-        grade:     null,
-        status:    "Enrolled",
-      }]);
-      setEnroll({ studentId: "" });
-      showToast(`${student.fullName} enrolled in ${selCourse.code}.`);
-    } catch (e) { showToast(e.message, "error"); }
-  };
-
-  // ── Remove enrollment ─────────────────────────────────────────────────────────
-  const removeEnrollment = async (studentId, courseId) => {
-    const student = students.find(s => s.id === studentId);
-    const course  = progCourses.find(c => c.id === courseId);
-    if (!student || !course) return;
-    try {
-      await supabase.from("student_course_assignments")
+      // Remove from course_program_map first (FK cascade handles the rest,
+      // but we only remove the mapping for this program — the course itself
+      // stays if it belongs to other programs too)
+      await supabase.from("course_program_map")
         .delete()
-        .eq("student_id", student._uuid)
-        .eq("course_id",  course._uuid);
-      setEnrollments(prev => prev.filter(e => !(e.studentId === studentId && e.courseId === courseId)));
-      showToast("Enrollment removed.");
+        .eq("course_id", course._uuid)
+        .eq("program_id", selProg.programId);
+
+      // Check if this course is still mapped to any other programs
+      const { count } = await supabase
+        .from("course_program_map")
+        .select("*", { count: "exact", head: true })
+        .eq("course_id", course._uuid);
+
+      // Only delete the course catalog row if it's no longer used anywhere
+      if (count === 0) {
+        await Promise.all([
+          supabase.from("materials").delete().eq("course_id", course._uuid),
+          supabase.from("exams").delete().eq("course_id", course._uuid),
+          supabase.from("course_sections").delete().eq("course_id", course._uuid),
+        ]);
+        await supabase.from("courses").delete().eq("course_id", course._uuid);
+        setCourses(prev => prev.filter(c => c._uuid !== course._uuid));
+      }
+
+      setProgCourses(prev => prev.filter(c => c._uuid !== course._uuid));
+      setConfirmDel(null);
+      showToast(count === 0 ? "Course deleted." : "Course removed from this program.");
     } catch (e) { showToast(e.message, "error"); }
   };
 
@@ -450,13 +377,13 @@ export default function AdminCourseManagement({ courses, setCourses, users, enro
 
   const Breadcrumb = () => (
     <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#475569", padding: "6px 18px", background: "#1e293b", borderBottom: "1px solid #334155", flexShrink: 0 }}>
-      <button onClick={() => { setLevel("dept"); setSelDept(null); setSelProg(null); setSelCourse(null); setProgs([]); setProgCourses([]); setEditingId(null); }}
+      <button onClick={() => { setLevel("dept"); setSelDept(null); setSelProg(null); setProgs([]); setProgCourses([]); setEditingId(null); }}
         style={{ background: "none", border: "none", color: level === "dept" ? "#f1f5f9" : "#6366f1", fontWeight: 700, cursor: "pointer", fontFamily: "inherit", fontSize: 12 }}>
         🏛️ Departments
       </button>
       {selDept && (<>
         <span style={{ color: "#334155" }}>›</span>
-        <button onClick={() => { if (level !== "prog") { setLevel("prog"); setSelProg(null); setSelCourse(null); setProgCourses([]); setEditingId(null); } }}
+        <button onClick={() => { if (level !== "prog") { setLevel("prog"); setSelProg(null); setProgCourses([]); setEditingId(null); } }}
           style={{ background: "none", border: "none", color: level === "prog" ? "#f1f5f9" : "#6366f1", fontWeight: 700, cursor: "pointer", fontFamily: "inherit", fontSize: 12 }}>
           {selDept.name}
         </button>
@@ -495,10 +422,10 @@ export default function AdminCourseManagement({ courses, setCourses, users, enro
   ];
 
   const progCols = [
-    { field: "code",           header: "Code",       width: 80 },
-    { field: "name",           header: "Program" },
-    { field: "description",    header: "Description" },
-    { field: "isActive",       header: "Status",     width: 90,
+    { field: "code",        header: "Code",       width: 80 },
+    { field: "name",        header: "Program" },
+    { field: "description", header: "Description" },
+    { field: "isActive",    header: "Status",     width: 90,
       cellRenderer: (v, row) => (
         <button onClick={e => { e.stopPropagation(); toggleProgActive(row); }}
           style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 9999, border: "none", cursor: "pointer", background: v === 1 ? "rgba(16,185,129,.2)" : "rgba(239,68,68,.2)", color: v === 1 ? "#34d399" : "#f87171" }}>
@@ -515,44 +442,25 @@ export default function AdminCourseManagement({ courses, setCourses, users, enro
       )},
   ];
 
+  // Updated: removed teacher/schedule/room — those live in AdminCourseSections
   const courseCols = [
-    { field: "code",        header: "Code",    width: 80 },
-    { field: "name",        header: "Course" },
-    { field: "teacherName", header: "Teacher", width: 160 },
-    { field: "schedule",    header: "Schedule",width: 140 },
-    { field: "room",        header: "Room",    width: 100 },
-    { field: "units",       header: "Units",   width: 55 },
-    { field: "yearLevel",   header: "Year",    width: 80 },
-    { field: "semester",    header: "Semester",width: 110 },
-    { field: "_uuid", header: "Actions", width: 120, sortable: false,
+    { field: "code",      header: "Code",     width: 90 },
+    { field: "name",      header: "Course" },
+    { field: "units",     header: "Units",    width: 65 },
+    { field: "yearLevel", header: "Year",     width: 90 },
+    { field: "semester",  header: "Semester", width: 120 },
+    { field: "_uuid",     header: "Actions",  width: 110, sortable: false,
       cellRenderer: (_, row) => (
         <div style={{ display: "flex", gap: 4 }} onClick={e => e.stopPropagation()}>
-          <Btn size="sm" variant="secondary" onClick={() => { setEditingId(row._uuid); setSelCourse(row); setCourseForm({ code: row.code, name: row.name, units: String(row.units || 3), schedule: row.schedule || "", yearLevel: row.yearLevel || "1st Year", semester: row.semester || "1st Semester", room: row.room || "" }); }}>✏️</Btn>
-          <Btn size="sm" variant="danger"    onClick={() => setConfirmDel({ type: "course", item: row })}>🗑</Btn>
+          <Btn size="sm" variant="secondary" onClick={() => {
+            setEditingId(row._uuid);
+            setCourseForm({ code: row.code, name: row.name, units: String(row.units || 3), yearLevel: row.yearLevel || "1st Year", semester: row.semester || "1st Semester" });
+          }}>✏️</Btn>
+          <Btn size="sm" variant="danger" onClick={() => setConfirmDel({ type: "course", item: row })}>🗑</Btn>
         </div>
       )},
   ];
 
-  // Enrolled students for selected course
-  const courseEnrollments = selCourse
-    ? enrollments
-        .filter(e => e.courseId === selCourse.id)
-        .map(e => ({ ...e, studentName: students.find(s => s.id === e.studentId)?.fullName || e.studentId }))
-    : [];
-
-  const enrolledStudentCols = [
-    { field: "studentName", header: "Student" },
-    { field: "status",      header: "Status",  width: 100, cellRenderer: v => <Badge color="success">{v}</Badge> },
-    { field: "grade",       header: "Grade",   width: 70,  cellRenderer: v => v != null ? <span style={{ fontWeight: 700, color: "#fbbf24" }}>{v}%</span> : <span style={{ color: "#475569" }}>—</span> },
-    { field: "studentId",   header: "Remove",  width: 80, sortable: false,
-      cellRenderer: (v, row) => (
-        <Btn size="sm" variant="danger" onClick={e => { e.stopPropagation(); removeEnrollment(v, row.courseId); }}>✕</Btn>
-      )},
-  ];
-
-  // ════════════════════════════════════════════════════════════════════════════
-  //  SUBTITLE helper
-  // ════════════════════════════════════════════════════════════════════════════
   const subtitle = level === "dept"
     ? `${depts.length} department${depts.length !== 1 ? "s" : ""}`
     : level === "prog"
@@ -583,8 +491,12 @@ export default function AdminCourseManagement({ courses, setCourses, users, enro
       {/* Confirm modal */}
       {confirmDel && (
         <ConfirmModal
-          title={`Delete ${confirmDel.type === "dept" ? "Department" : confirmDel.type === "prog" ? "Program" : "Course"}`}
-          message={`Delete "${confirmDel.item.name}"? This performs a soft delete and cannot be undone from the UI.`}
+          title={`${confirmDel.type === "course" ? "Remove Course" : "Delete"} "${confirmDel.item.name || confirmDel.item.code}"`}
+          message={
+            confirmDel.type === "course"
+              ? `Remove "${confirmDel.item.name}" from ${selProg?.name}? If this course belongs to other programs it will not be fully deleted.`
+              : `Delete "${confirmDel.item.name}"? This cannot be undone from the UI.`
+          }
           onConfirm={() => {
             if (confirmDel.type === "dept")   deleteDept(confirmDel.item);
             if (confirmDel.type === "prog")   deleteProg(confirmDel.item);
@@ -599,7 +511,6 @@ export default function AdminCourseManagement({ courses, setCourses, users, enro
         {/* ════════ LEVEL: DEPARTMENTS ════════ */}
         {level === "dept" && (
           <>
-            {/* Left pane — create/edit dept */}
             <div style={S.pane}>
               <PaneHeader title={editingId ? "✏️ Edit Department" : "➕ New Department"} />
               <FF label="Code *"><Input value={deptForm.code} onChange={e => setDeptForm(f => ({ ...f, code: e.target.value }))} placeholder="e.g. CCS" /></FF>
@@ -616,7 +527,6 @@ export default function AdminCourseManagement({ courses, setCourses, users, enro
                 {editingId && <Btn variant="secondary" onClick={() => { setEditingId(null); setDeptForm(emptyDept); }}>Cancel</Btn>}
               </div>
             </div>
-            {/* Grid */}
             <div style={S.grid}>
               <div style={{ ...S.label, flexShrink: 0 }}>{depts.length} Departments · Click "View →" to see programs</div>
               <div style={{ flex: 1, overflow: "hidden" }}>
@@ -631,10 +541,7 @@ export default function AdminCourseManagement({ courses, setCourses, users, enro
         {level === "prog" && (
           <>
             <div style={S.pane}>
-              <PaneHeader
-                title={editingId ? "✏️ Edit Program" : "➕ New Program"}
-                sub={`in ${selDept?.name}`}
-              />
+              <PaneHeader title={editingId ? "✏️ Edit Program" : "➕ New Program"} sub={`in ${selDept?.name}`} />
               <FF label="Code *"><Input value={progForm.code} onChange={e => setProgForm(f => ({ ...f, code: e.target.value }))} placeholder="e.g. BSCS" /></FF>
               <FF label="Program Name *"><Input value={progForm.name} onChange={e => setProgForm(f => ({ ...f, name: e.target.value }))} placeholder="e.g. BS Computer Science" /></FF>
               <FF label="Description">
@@ -645,8 +552,6 @@ export default function AdminCourseManagement({ courses, setCourses, users, enro
                 <Btn onClick={saveProg} style={{ flex: 1 }}>{editingId ? "✓ Save" : "✦ Create"}</Btn>
                 {editingId && <Btn variant="secondary" onClick={() => { setEditingId(null); setProgForm(emptyProg); }}>Cancel</Btn>}
               </div>
-
-              {/* Dept info */}
               <div style={{ ...S.section, display: "flex", flexDirection: "column", gap: 6 }}>
                 <div style={S.label}>Department Info</div>
                 {[["Code", selDept?.code], ["Room", selDept?.room], ["Email", selDept?.email], ["Phone", selDept?.phone]]
@@ -673,14 +578,20 @@ export default function AdminCourseManagement({ courses, setCourses, users, enro
         {/* ════════ LEVEL: COURSES ════════ */}
         {level === "course" && (
           <>
-            {/* Left pane — create course + teacher assign + enroll */}
-            <div style={{ ...S.pane, width: 320 }}>
+            {/* Left pane — create/edit course */}
+            <div style={{ ...S.pane, width: 280 }}>
               <PaneHeader
                 title={editingId ? "✏️ Edit Course" : "➕ New Course"}
                 sub={`in ${selProg?.name}`}
               />
-              <FF label="Course Code *"><Input value={courseForm.code} onChange={e => setCourseForm(f => ({ ...f, code: e.target.value }))} placeholder="e.g. CS101" /></FF>
-              <FF label="Course Name *"><Input value={courseForm.name} onChange={e => setCourseForm(f => ({ ...f, name: e.target.value }))} placeholder="e.g. Intro to CS" /></FF>
+
+              <FF label="Course Code *">
+                <Input value={courseForm.code} onChange={e => setCourseForm(f => ({ ...f, code: e.target.value }))} placeholder="e.g. CS101" />
+              </FF>
+              <FF label="Course Name *">
+                <Input value={courseForm.name} onChange={e => setCourseForm(f => ({ ...f, name: e.target.value }))} placeholder="e.g. Intro to CS" />
+              </FF>
+
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
                 <FF label="Units">
                   <Sel value={courseForm.units} onChange={e => setCourseForm(f => ({ ...f, units: e.target.value }))}>
@@ -689,87 +600,70 @@ export default function AdminCourseManagement({ courses, setCourses, users, enro
                 </FF>
                 <FF label="Year Level">
                   <Sel value={courseForm.yearLevel} onChange={e => setCourseForm(f => ({ ...f, yearLevel: e.target.value }))}>
-                    {["1st Year","2nd Year","3rd Year","4th Year"].map(y => <option key={y}>{y}</option>)}
+                    {["1st Year","2nd Year","3rd Year","4th Year","5th Year"].map(y => <option key={y}>{y}</option>)}
                   </Sel>
                 </FF>
               </div>
+
               <FF label="Semester">
                 <Sel value={courseForm.semester} onChange={e => setCourseForm(f => ({ ...f, semester: e.target.value }))}>
                   {["1st Semester","2nd Semester","Summer"].map(s => <option key={s}>{s}</option>)}
                 </Sel>
               </FF>
-              <FF label="Schedule"><Input value={courseForm.schedule} onChange={e => setCourseForm(f => ({ ...f, schedule: e.target.value }))} placeholder="e.g. MWF 8:00–9:00 AM" /></FF>
-              <FF label="Room"><Input value={courseForm.room} onChange={e => setCourseForm(f => ({ ...f, room: e.target.value }))} placeholder="e.g. Room 301" /></FF>
+
               <div style={{ display: "flex", gap: 8 }}>
                 <Btn onClick={saveCourse} style={{ flex: 1 }}>{editingId ? "✓ Save" : "✦ Create"}</Btn>
-                {editingId && <Btn variant="secondary" onClick={() => { setEditingId(null); setCourseForm(emptyCourse); setSelCourse(null); }}>Cancel</Btn>}
+                {editingId && <Btn variant="secondary" onClick={() => { setEditingId(null); setCourseForm(emptyCourse); }}>Cancel</Btn>}
               </div>
 
-              {/* Assign teacher — only when a course is selected */}
-              {selCourse && !editingId && (
-                <div style={S.section}>
-                  <div style={{ ...S.label, marginBottom: 8 }}>👩‍🏫 Assign Teacher to {selCourse.code}</div>
-                  <FF label="Current Teacher">
-                    <div style={{ fontSize: 13, color: selCourse.teacherName === "Unassigned" ? "#475569" : "#34d399", fontWeight: 600, padding: "6px 0" }}>
-                      {selCourse.teacherName}
-                    </div>
-                  </FF>
-                  <FF label="Change To">
-                    <Sel value={teacherSel} onChange={e => setTeacherSel(e.target.value)}>
-                      <option value="">— Select Teacher —</option>
-                      {teachers.map(t => <option key={t.id} value={t.id}>{t.fullName}</option>)}
-                    </Sel>
-                  </FF>
-                  <Btn onClick={assignTeacher} disabled={!teacherSel} style={{ width: "100%" }}>Assign Teacher</Btn>
+              {/* Info callout pointing to Course Sections */}
+              <div style={{ ...S.section }}>
+                <div style={{ background: "rgba(99,102,241,.08)", border: "1px solid rgba(99,102,241,.2)", borderRadius: 7, padding: "10px 12px" }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: "#a5b4fc", marginBottom: 4 }}>📅 Schedules & Teachers</div>
+                  <div style={S.hint}>
+                    Set teacher, schedule, and room in <strong style={{ color: "#a5b4fc" }}>Course Sections</strong>.
+                    A course can have multiple sections (A, B, C…) each with its own schedule.
+                  </div>
                 </div>
-              )}
+              </div>
 
-              {/* Enroll student — only when a course is selected */}
-              {selCourse && !editingId && (
-                <div style={S.section}>
-                  <div style={{ ...S.label, marginBottom: 8 }}>🎓 Enroll Student in {selCourse.code}</div>
-                  <FF label="Student">
-                    <Sel value={enroll.studentId} onChange={e => setEnroll({ studentId: e.target.value })}>
-                      <option value="">— Select Student —</option>
-                      {students
-                        .filter(s => !enrollments.find(e => e.studentId === s.id && e.courseId === selCourse.id))
-                        .map(s => <option key={s.id} value={s.id}>{s.fullName}</option>)}
-                    </Sel>
-                  </FF>
-                  <Btn onClick={enrollStudent} disabled={!enroll.studentId} style={{ width: "100%" }}>Enroll Student</Btn>
+              <div style={{ ...S.section }}>
+                <div style={{ background: "rgba(16,185,129,.07)", border: "1px solid rgba(16,185,129,.18)", borderRadius: 7, padding: "10px 12px" }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: "#34d399", marginBottom: 4 }}>🎓 Student Enrollment</div>
+                  <div style={S.hint}>
+                    Enroll students in bulk via <strong style={{ color: "#34d399" }}>Bulk Assign</strong>,
+                    or per-section in <strong style={{ color: "#34d399" }}>Course Sections</strong>.
+                  </div>
                 </div>
-              )}
+              </div>
+
+              {/* Shared-course hint */}
+              <div style={{ ...S.section }}>
+                <div style={{ background: "rgba(245,158,11,.07)", border: "1px solid rgba(245,158,11,.18)", borderRadius: 7, padding: "10px 12px" }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: "#fbbf24", marginBottom: 4 }}>🔗 Shared Courses (e.g. NSTP)</div>
+                  <div style={S.hint}>
+                    To assign a course to <em>multiple programs</em>, go to
+                    <strong style={{ color: "#fbbf24" }}> Course Sections → Program Maps</strong>.
+                  </div>
+                </div>
+              </div>
             </div>
 
-            {/* Right area — course grid + enrolled students */}
+            {/* Right area — courses grid */}
             <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-              {/* Course grid */}
-              <div style={{ flex: selCourse ? "0 0 55%" : 1, padding: "14px 16px", display: "flex", flexDirection: "column", overflow: "hidden", background: "#0f172a", gap: 8, borderBottom: selCourse ? "1px solid #334155" : "none" }}>
+              <div style={{ flex: 1, padding: "14px 16px", display: "flex", flexDirection: "column", overflow: "hidden", background: "#0f172a", gap: 8 }}>
                 <div style={{ ...S.label, flexShrink: 0 }}>
                   {progCourses.length} Courses · {selProg?.name}
-                  {selCourse && <span style={{ marginLeft: 10, color: "#6366f1" }}>← {selCourse.code} selected</span>}
                 </div>
                 <div style={{ flex: 1, overflow: "hidden" }}>
-                  {loading ? <div style={{ color: "#475569", textAlign: "center", paddingTop: 40 }}>Loading…</div>
+                  {loading
+                    ? <div style={{ color: "#475569", textAlign: "center", paddingTop: 40 }}>Loading…</div>
                     : progCourses.length === 0
                     ? <div style={{ color: "#475569", textAlign: "center", paddingTop: 40, fontSize: 13 }}>No courses yet. Create one in the left pane.</div>
-                    : <LMSGrid columns={courseCols} rowData={progCourses} onRowClick={c => { setSelCourse(prev => prev?._uuid === c._uuid ? null : c); setEditingId(null); setCourseForm(emptyCourse); setTeacherSel(""); setEnroll({ studentId: "" }); }} selectedId={selCourse?.id} height="100%" />}
+                    : <LMSGrid columns={courseCols} rowData={progCourses} height="100%" />
+                  }
                 </div>
               </div>
-
-              {/* Enrolled students for selected course */}
-              {selCourse && (
-                <div style={{ flex: 1, padding: "12px 16px", display: "flex", flexDirection: "column", overflow: "hidden", background: "#0a0f1a", gap: 8 }}>
-                  <div style={{ ...S.label, flexShrink: 0 }}>
-                    🎓 Students enrolled in {selCourse.code} — {selCourse.name} ({courseEnrollments.length})
-                  </div>
-                  <div style={{ flex: 1, overflow: "hidden" }}>
-                    {courseEnrollments.length === 0
-                      ? <div style={{ color: "#334155", fontSize: 13, textAlign: "center", paddingTop: 20 }}>No students enrolled yet.</div>
-                      : <LMSGrid columns={enrolledStudentCols} rowData={courseEnrollments} height="100%" />}
-                  </div>
-                </div>
-              )}
             </div>
           </>
         )}
