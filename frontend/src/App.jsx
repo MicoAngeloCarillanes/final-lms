@@ -30,7 +30,7 @@ export default function App() {
   useEffect(() => {
     async function loadUsers() {
       const [userRes, stuRes, tchRes] = await Promise.all([
-        supabase.from("users").select("*").eq("is_active", true),
+        supabase.from("users").select("*").eq("is_active", 1),
         supabase.from("students").select("*"),   // no embedded join — avoids FK name / RLS issue
         supabase.from("teachers").select("*"),
       ]);
@@ -69,8 +69,7 @@ export default function App() {
       // 1. Fetch courses only (no embedded joins — avoids silent RLS failures)
       const { data: rawCourses, error } = await supabase
         .from("courses")
-        .select("course_id, course_code, course_name, units, status, program_id")
-        .eq("is_active", true);
+        .select("course_id, course_code, course_name, units");
 
       if (error || !rawCourses) return;
 
@@ -86,7 +85,7 @@ export default function App() {
         (schData ?? []).forEach(row => { schMap[row.course_id] = row; });
       }
 
-      // 3. Fetch teacher assignments separately with explicit ORDER BY assigned_at DESC
+      // 3. Fetch teacher assignments from teacher_course_assignments (legacy)
       const { data: tcaData } = await supabase
         .from("teacher_course_assignments")
         .select("course_id, teacher_id, assigned_at")
@@ -97,6 +96,20 @@ export default function App() {
       (tcaData ?? []).forEach(row => {
         if (!tcaMap[row.course_id]) tcaMap[row.course_id] = row.teacher_id;
       });
+
+      // 3b. Also pull teacher_id from course_sections for courses assigned via
+      //     the new section-based flow (fills gaps not covered by tcaMap)
+      if (courseIds.length) {
+        const { data: sectTeachers } = await supabase
+          .from("course_sections")
+          .select("course_id, teacher_id")
+          .in("course_id", courseIds)
+          .not("teacher_id", "is", null);
+        (sectTeachers ?? []).forEach(row => {
+          // Only fill in if no legacy assignment exists for this course
+          if (!tcaMap[row.course_id]) tcaMap[row.course_id] = row.teacher_id;
+        });
+      }
 
       // 4. Bulk fetch teacher user records
       const teacherIds = [...new Set(Object.values(tcaMap).filter(Boolean))];
@@ -124,8 +137,8 @@ export default function App() {
           yearLevel:   sch?.year_level     || "",
           semester:    sch?.semester       || "",
           room:        sch?.room           || "",
-          status:      c.status            || "Ongoing",
-          programId:   c.program_id        ?? null,
+          status:      "Ongoing",
+          programId:   null,
           _uuid:       c.course_id,
           _scheduleId: sch?.schedule_id    ?? null,
         };
@@ -135,13 +148,12 @@ export default function App() {
   }, []);
 
     // ── Load enrollments ─────────────────────────────────────────────────────────
+  // Merges both sources:
+  //   • student_course_assignments  — legacy direct enrollments
+  //   • student_section_enrollments — new section-based enrollments (via course_sections)
   useEffect(() => {
     async function loadEnrollments() {
-      const { data } = await supabase
-        .from("student_course_assignments")
-        .select("student_id, course_id, final_grade, enrollment_status");
-      if (!data) return;
-
+      // Shared lookup maps
       const [uRes, cRes] = await Promise.all([
         supabase.from("users").select("user_id, display_id").eq("role", "student"),
         supabase.from("courses").select("course_id, course_code"),
@@ -151,12 +163,54 @@ export default function App() {
       (uRes.data || []).forEach(u => { uMap[u.user_id] = u.display_id; });
       (cRes.data || []).forEach(c => { cMap[c.course_id] = c.course_code; });
 
-      setEnrollments(data.map(row => ({
+      // 1. Legacy enrollments
+      const { data: legacyData } = await supabase
+        .from("student_course_assignments")
+        .select("student_id, course_id, final_grade, enrollment_status");
+
+      const legacyRows = (legacyData || []).map(row => ({
         studentId: uMap[row.student_id] || row.student_id,
         courseId:  cMap[row.course_id]  || row.course_id,
         grade:     row.final_grade      ?? null,
         status:    row.enrollment_status || "Enrolled",
-      })));
+      }));
+
+      // 2. New section-based enrollments
+      const { data: sseData } = await supabase
+        .from("student_section_enrollments")
+        .select("student_id, section_id, final_grade, enrollment_status");
+
+      let sectionRows = [];
+      if (sseData && sseData.length > 0) {
+        const sectionIds = [...new Set(sseData.map(r => r.section_id))];
+        const { data: sectData } = await supabase
+          .from("course_sections")
+          .select("section_id, course_id")
+          .in("section_id", sectionIds);
+
+        const sectCourseMap = {};
+        (sectData || []).forEach(s => { sectCourseMap[s.section_id] = s.course_id; });
+
+        sectionRows = sseData.map(row => {
+          const courseUuid = sectCourseMap[row.section_id];
+          return {
+            studentId: uMap[row.student_id] || String(row.student_id),
+            courseId:  courseUuid ? (cMap[courseUuid] || courseUuid) : null,
+            grade:     row.final_grade ?? null,
+            status:    row.enrollment_status || "Enrolled",
+          };
+        }).filter(r => r.courseId);
+      }
+
+      // 3. Merge, deduplicate — section enrollment wins over legacy
+      const seen = new Set();
+      const merged = [];
+      for (const row of [...sectionRows, ...legacyRows]) {
+        const key = row.studentId + "__" + row.courseId;
+        if (!seen.has(key)) { seen.add(key); merged.push(row); }
+      }
+
+      setEnrollments(merged);
     }
     loadEnrollments();
   }, []);
