@@ -1,11 +1,6 @@
 /**
  * AdminDashboard.jsx
  * FOLDER: src/admin/AdminDashboard.jsx
- *
- * Changes:
- *  - Removed "Departments", "Programs", "Course Management" nav items
- *  - Replaced with single "Course Management" → AdminCourseManagement
- *    (unified Dept → Program → Course drill-down with teacher & student assignment)
  */
 import React, { useState } from "react";
 import Sidebar               from "../components/Sidebar";
@@ -13,6 +8,7 @@ import Dashboard             from "../components/Dashboard";
 import AdminOverview         from "./pages/AdminOverview";
 import AdminAccounts         from "./pages/AdminAccounts";
 import AdminCourseManagement from "./pages/AdminCourseManagement";
+import AdminPrograms         from "./pages/AdminPrograms";
 import AdminBulkEnroll       from "./pages/AdminBulkEnroll";
 import AdminSubAccounts      from "./pages/AdminSubAccounts";
 import ChatPage              from "../components/ChatPage";
@@ -22,6 +18,7 @@ export default function AdminDashboard({ user, onLogout, users, setUsers, course
   const [page, setPage] = useState("dashboard");
 
   const studentTeacherCount = users.filter(u => u.role === "student" || u.role === "teacher").length;
+  const programCount        = null; // badge not needed — programs loaded inside page
 
   const nav = [
     { id: "dashboard",    label: "Dashboard",        icon: "🏠", badge: null },
@@ -29,20 +26,22 @@ export default function AdminDashboard({ user, onLogout, users, setUsers, course
     { id: "sub-admins",   label: "Sub-Admins",        icon: "🛡️", badge: null },
     { id: "accounts",     label: "Accounts",          icon: "👥", badge: studentTeacherCount },
     { id: "courses",      label: "Course Management", icon: "📚", badge: courses.length },
+    { id: "programs",     label: "Programs",          icon: "🎓", badge: null },
     { id: "bulk-enroll",  label: "Bulk Assign",       icon: "🎓", badge: null },
-    { id: "terms",        label: "Term Settings",      icon: "📅", badge: null },
+    { id: "terms",        label: "Term Settings",     icon: "📅", badge: null },
     { id: "chat",         label: "Chat",              icon: "💬", badge: null },
   ];
 
   const pages = {
-    "dashboard":    <Dashboard user={user} courses={courses} enrollments={enrollments} />,
-    "overview":     <AdminOverview users={users} courses={courses} enrollments={enrollments} />,
-    "sub-admins":   <AdminSubAccounts user={user} />,
-    "accounts":     <AdminAccounts users={users} setUsers={setUsers} />,
-    "courses":      <AdminCourseManagement courses={courses} setCourses={setCourses} users={users} enrollments={enrollments} setEnrollments={setEnrollments} />,
-    "bulk-enroll":  <AdminBulkEnroll users={users} courses={courses} enrollments={enrollments} setEnrollments={setEnrollments} />,
-    "terms":        <AdminTermSettings user={user} />,
-    "chat":         <ChatPage user={user} />,
+    "dashboard":   <Dashboard user={user} courses={courses} enrollments={enrollments} />,
+    "overview":    <AdminOverview users={users} courses={courses} enrollments={enrollments} />,
+    "sub-admins":  <AdminSubAccounts user={user} />,
+    "accounts":    <AdminAccounts users={users} setUsers={setUsers} />,
+    "courses":     <AdminCourseManagement courses={courses} setCourses={setCourses} users={users} enrollments={enrollments} setEnrollments={setEnrollments} />,
+    "programs":    <AdminPrograms users={users} />,
+    "bulk-enroll": <AdminBulkEnroll users={users} courses={courses} enrollments={enrollments} setEnrollments={setEnrollments} />,
+    "terms":       <AdminTermSettings user={user} />,
+    "chat":        <ChatPage user={user} />,
   };
 
   return (
