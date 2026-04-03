@@ -102,7 +102,7 @@ export function useCurrentTerm(date) {
       setTerm(resolved);
     });
     return () => { active = false; };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+   
   }, []);
 
   return term;

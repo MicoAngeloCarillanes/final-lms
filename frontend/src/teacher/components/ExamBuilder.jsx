@@ -21,7 +21,7 @@ export default function ExamBuilder({ course, initialExam, onSave, onBack }) {
   // Update term default once DB settings load (only if user hasn't manually changed it yet)
   React.useEffect(() => {
     if (!initialExam?.term) setTerm(autoTerm);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+   
   }, [autoTerm]);
   const [qTimer,      setQTimer]      = useState(initialExam?.qTimer     || 3);   // minutes per question
   const [randomize,   setRandomize]   = useState(initialExam?.randomize  ?? true);

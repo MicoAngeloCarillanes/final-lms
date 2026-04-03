@@ -54,7 +54,7 @@ export default function StudentGrades({ user, courses, examSubmissions, enrollme
       setWorkSubs(wsRes.data || []);
     }
     loadAll();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+   
   }, [enrollments, user._uuid]);
 
   const cellGradeClass = (v) =>

@@ -602,7 +602,7 @@ export default function StudentCourses({ user, courses, onSubmitExam, examSubmis
       if (mRes.data) setAllMaterials(mRes.data.map(r => normalizeMaterial({ ...r, courses: { course_code: uuidToCode[r.course_id] || r.course_id } })));
       if (eRes.data) setAllExams(eRes.data.map(r => normalizeExam({ ...r, courses: { course_code: uuidToCode[r.course_id] || r.course_id }, exam_questions: (qRes.data || []).filter(q => q.exam_id === r.exam_id) })));
     });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+   
   }, [enrollments, courses]);
 
   // Load + realtime work submissions

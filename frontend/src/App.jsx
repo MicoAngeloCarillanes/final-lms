@@ -11,7 +11,7 @@
 import React, { useState, useEffect } from "react";
 import "./App.css";
 import { supabase } from "./supabaseClient";
-import { normalizeUser, normalizeMaterial, normalizeExam } from "./lib/normalizers";
+import { normalizeUser } from "./lib/normalizers";
 
 import LoginPage         from "./LoginPage";
 import AdminDashboard    from "./admin/AdminDashboard";

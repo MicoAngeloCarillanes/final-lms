@@ -63,7 +63,7 @@ export default function TeacherGrades({ user, courses, allUsers, examSubmissions
       })));
     }
     loadData();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+   
   }, [courses]);
 
   const getTermData = (studentDisplayId, studentUuid, courseId, courseUuid) => {

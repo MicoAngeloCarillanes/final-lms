@@ -59,7 +59,7 @@ export default function LoginPage({ onLogin }) {
       }
 
       onLogin(normalizeUser({ ...userData, ...subData }));
-    } catch (e) {
+    } catch {
       setErr("Connection error. Please try again.");
     }
     setLoading(false);

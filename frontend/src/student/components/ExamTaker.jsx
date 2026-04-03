@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { QT_META } from "../../lib/constants";
 import { Badge, Btn, Input } from "../../components/ui";
 import ResultsSummary from "./ResultsSummary";
@@ -51,7 +51,7 @@ export default function ExamTaker({ exam, course, user, onBack, onSubmit }) {
       }
     }
     return qs;
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+   
   }, [exam.id]);
 
   const qTimerSecs = (exam.qTimer || 3) * 60; // minutes → seconds
@@ -97,12 +97,12 @@ export default function ExamTaker({ exam, course, user, onBack, onSubmit }) {
     if (ms <= 0) { doSubmit(true); return; }
     const t = setTimeout(() => doSubmit(true), ms);
     return () => clearTimeout(t);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+   
   }, [endDt, submitted]);
 
   const setAnswer = (qId, val) => setAnswers(prev => ({ ...prev, [qId]: val }));
 
-  const doSubmit = useCallback((auto = false) => {
+  function doSubmit(auto = false) {
     setShowConfirm(false);
     let score = 0;
     const questionResults = questions.map(q => {
@@ -134,7 +134,7 @@ export default function ExamTaker({ exam, course, user, onBack, onSubmit }) {
     setResult(submission);
     setSubmitted(true);
     onSubmit(submission);
-  }, [questions, answers, exam, course, user, onSubmit]);
+  }
 
   const handleNext = () => {
     if (isLast) {

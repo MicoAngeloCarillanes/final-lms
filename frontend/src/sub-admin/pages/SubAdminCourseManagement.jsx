@@ -217,7 +217,7 @@ export default function SubAdminCourseManagement({ user, users = [] }) {
       } catch (e) { showToast(e.message, "error"); }
       setLoading(false);
     })();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+   
   }, [user._uuid]);
 
   // Load every active course, derive prefix groups

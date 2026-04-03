@@ -326,7 +326,7 @@ export default function AdminCourseManagement({ courses: globalCourses, setCours
       catch (e) { showToast(e.message, "error"); }
       setLoading(false);
     })();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+   
   }, []);
 
   const loadAllCourses = useCallback(async () => {

@@ -25,12 +25,6 @@ export const gradeColor = (g) =>
  * the full 40% weight. If both quiz and exam have data each takes its own weight.
  */
 export const computeTermGrade = ({ cw, cs, exam, quiz }) => {
-  const parts = [
-    { val: cw,   w: 0.30 },
-    { val: cs,   w: 0.30 },
-    { val: exam, w: 0.40 },
-    { val: quiz, w: 0.30 },  // quizzes replace cw weight when present
-  ];
   // If both cw and quiz exist, quiz takes the cw slot (they share the same 30% bucket)
   // Combine: average of cw and quiz scores for the 30% coursework bucket
   const cwCombined = (cw != null && quiz != null)

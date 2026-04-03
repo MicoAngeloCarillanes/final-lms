@@ -820,7 +820,7 @@ export default function TeacherCourses({ user, courses, setCourses, allUsers, en
       if (eRes.data) setExams(eRes.data.map(r => normalizeExam({ ...r, courses:{ course_code:uuidToCode[r.course_id]||r.course_id }, exam_questions:(qRes.data||[]).filter(q=>q.exam_id===r.exam_id) })));
     }
     load();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+   
   }, [courses]);
 
   // Add material
