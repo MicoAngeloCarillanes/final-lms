@@ -2,17 +2,18 @@
  * AdminDashboard.jsx
  * FOLDER: src/admin/AdminDashboard.jsx
  */
-import React, { useState } from "react";
-import Sidebar               from "../components/Sidebar";
-import Dashboard             from "../components/Dashboard";
-import AdminOverview         from "./pages/AdminOverview";
-import AdminAccounts         from "./pages/AdminAccounts";
+import { useState } from "react";
+import ChatPage from "../components/ChatPage";
+import Dashboard from "../components/Dashboard";
+import Sidebar from "../components/Sidebar";
+import AdminAccounts from "./pages/AdminAccounts";
+import AdminBulkAccounts from "./pages/AdminBulkAccounts";
+import AdminBulkEnroll from "./pages/AdminBulkEnroll";
 import AdminCourseManagement from "./pages/AdminCourseManagement";
-import AdminPrograms         from "./pages/AdminPrograms";
-import AdminBulkEnroll       from "./pages/AdminBulkEnroll";
-import AdminSubAccounts      from "./pages/AdminSubAccounts";
-import ChatPage              from "../components/ChatPage";
-import AdminTermSettings     from "./pages/AdminTermSettings";
+import AdminOverview from "./pages/AdminOverview";
+import AdminPrograms from "./pages/AdminPrograms";
+import AdminSubAccounts from "./pages/AdminSubAccounts";
+import AdminTermSettings from "./pages/AdminTermSettings";
 
 export default function AdminDashboard({ user, onLogout, users, setUsers, courses, setCourses, enrollments, setEnrollments }) {
   const [page, setPage] = useState("dashboard");
@@ -30,6 +31,7 @@ export default function AdminDashboard({ user, onLogout, users, setUsers, course
     { id: "bulk-enroll",  label: "Bulk Assign",       icon: "🎓", badge: null },
     { id: "terms",        label: "Term Settings",     icon: "📅", badge: null },
     { id: "chat",         label: "Chat",              icon: "💬", badge: null },
+    { id: "bulk-accounts", label: "Bulk Accounts", icon: "🧾", badge: null },
   ];
 
   const pages = {
@@ -42,6 +44,7 @@ export default function AdminDashboard({ user, onLogout, users, setUsers, course
     "bulk-enroll": <AdminBulkEnroll users={users} courses={courses} enrollments={enrollments} setEnrollments={setEnrollments} />,
     "terms":       <AdminTermSettings user={user} />,
     "chat":        <ChatPage user={user} />,
+    "bulk-accounts": <AdminBulkAccounts setUsers={setUsers} />,
   };
 
   return (

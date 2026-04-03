@@ -43,6 +43,207 @@ export const userApi = {
     if (upErr) throw new Error(upErr.message);
     return "Password changed successfully.";
   },
+
+    async bulkCreateAccounts({
+    role,
+    rows,
+    defaultPassword = "Welcome@123",
+    programOptions = [],
+  }) {
+    if (!["student", "teacher"].includes(role)) {
+      throw new Error("Role must be either 'student' or 'teacher'.");
+    }
+
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return { created: [], failed: [] };
+    }
+
+    const normalizeText = (value) => String(value ?? "").trim();
+
+    const makeBaseUsername = (fullName) => {
+      const cleaned = normalizeText(fullName)
+        .toLowerCase()
+        .replace(/[^a-z0-9\s._-]/g, "")
+        .replace(/\s+/g, ".");
+      return cleaned || "user";
+    };
+
+    const nextUsername = (base, used) => {
+      let candidate = base;
+      let suffix = 1;
+      while (used.has(candidate)) {
+        candidate = `${base}${suffix}`;
+        suffix += 1;
+      }
+      used.add(candidate);
+      return candidate;
+    };
+
+    const parseDisplayIdNumber = (displayId) => {
+      const num = parseInt(String(displayId ?? "").replace(/\D/g, ""), 10);
+      return Number.isFinite(num) ? num : 0;
+    };
+
+    const normalizedRows = rows.map((row, index) => ({
+      rowNumber: index + 1,
+      username: normalizeText(row.username || row.user_name),
+      fullName: normalizeText(row.fullName || row.full_name || row.name),
+      email: normalizeText(row.email),
+      civilStatus: normalizeText(row.civilStatus || row.civil_status) || "Single",
+      birthdate: normalizeText(row.birthdate),
+      address: normalizeText(row.address),
+      yearLevel: normalizeText(row.yearLevel || row.year_level) || "1st Year",
+      semester: normalizeText(row.semester) || "1st Semester",
+      programId: normalizeText(row.programId || row.program_id),
+      password: normalizeText(row.password),
+    }));
+
+    const failed = [];
+    const validRows = [];
+
+    normalizedRows.forEach((row) => {
+      if (!row.fullName) {
+        failed.push({ ...row, reason: "Full name is required." });
+        return;
+      }
+
+      if (!row.birthdate) {
+        failed.push({ ...row, reason: "Birthdate is required." });
+        return;
+      }
+
+      if (role === "student" && !row.programId) {
+        failed.push({ ...row, reason: "Program ID is required for student accounts." });
+        return;
+      }
+
+      validRows.push(row);
+    });
+
+    if (validRows.length === 0) {
+      return { created: [], failed };
+    }
+
+    const wantedUsernames = validRows
+      .map((row) => row.username || makeBaseUsername(row.fullName));
+
+    const { data: existingUsers, error: existingErr } = await supabase
+      .from("users")
+      .select("username")
+      .in("username", [...new Set(wantedUsernames)]);
+
+    if (existingErr) {
+      throw new Error(existingErr.message);
+    }
+
+    const usedUsernames = new Set((existingUsers ?? []).map((u) => u.username));
+
+    const { data: maxRow, error: maxErr } = await supabase
+      .from("users")
+      .select("display_id")
+      .eq("role", role)
+      .order("display_id", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (maxErr) {
+      throw new Error(maxErr.message);
+    }
+
+    let nextNumber = parseDisplayIdNumber(maxRow?.display_id);
+    const prefix = role === "student" ? "STU" : "TCH";
+
+    const created = [];
+
+    for (const row of validRows) {
+      try {
+        const usernameBase = row.username || makeBaseUsername(row.fullName);
+        const username = nextUsername(usernameBase, usedUsernames);
+        const plainPassword = row.password || defaultPassword;
+
+        const { data: hashData, error: hashErr } = await supabase.rpc("hash_password", {
+          plain: plainPassword,
+        });
+
+        if (hashErr || !hashData) {
+          throw new Error("Could not hash password.");
+        }
+
+        nextNumber += 1;
+        const displayId = `${prefix}${String(nextNumber).padStart(3, "0")}`;
+
+        const { data: newUserRow, error: userErr } = await supabase
+          .from("users")
+          .insert({
+            display_id: displayId,
+            username,
+            full_name: row.fullName,
+            email: row.email || null,
+            password_hash: hashData,
+            civil_status: row.civilStatus || null,
+            birthdate: row.birthdate || null,
+            address: row.address || null,
+            role,
+          })
+          .select()
+          .single();
+
+        if (userErr || !newUserRow) {
+          throw new Error(userErr?.message || "Failed to create user row.");
+        }
+
+        if (role === "student") {
+          const { error: stuErr } = await supabase.from("students").insert({
+            user_id: newUserRow.user_id,
+            year_level: row.yearLevel,
+            semester: row.semester,
+            program_id: Number(row.programId),
+          });
+
+          if (stuErr) {
+            throw new Error(`Student profile failed: ${stuErr.message}`);
+          }
+        } else {
+          const { error: tchErr } = await supabase.from("teachers").insert({
+            user_id: newUserRow.user_id,
+          });
+
+          if (tchErr) {
+            throw new Error(`Teacher profile failed: ${tchErr.message}`);
+          }
+        }
+
+        const matchedProgram = programOptions.find(
+          (p) => String(p.programId) === String(row.programId)
+        );
+
+        created.push({
+          _uuid: newUserRow.user_id,
+          id: displayId,
+          username,
+          fullName: row.fullName,
+          email: row.email,
+          civilStatus: row.civilStatus,
+          birthdate: row.birthdate,
+          address: row.address,
+          role,
+          yearLevel: role === "student" ? row.yearLevel : undefined,
+          semester: role === "student" ? row.semester : undefined,
+          programId: role === "student" ? Number(row.programId) : undefined,
+          programName: role === "student" ? matchedProgram?.name || "" : undefined,
+          isActive: true,
+          generatedPassword: plainPassword,
+        });
+      } catch (error) {
+        failed.push({
+          ...row,
+          reason: error.message || "Unknown error.",
+        });
+      }
+    }
+
+    return { created, failed };
+  },
 };
 
 // ─── Department (Supabase) ────────────────────────────────────────────────────
