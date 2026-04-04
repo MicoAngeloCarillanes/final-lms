@@ -2,17 +2,57 @@
  * SubAdminCourseManagement.jsx
  * FOLDER: src/sub-admin/pages/SubAdminCourseManagement.jsx
  *
- * Navigation flow (updated):
- *   Codes (ITC / CS / GCAS / STAT / …) → Courses (of selected prefix) → Sections
+ * ── REQUIRES TWO NEW SUPABASE TABLES ─────────────────────────────────────────
  *
- * The first level now groups courses by their alphabetic code prefix instead of
- * by program.  All section management logic (Regular / Shared, schedule, teacher,
- * enroll students) is unchanged.
+ *  CREATE TABLE course_sections (
+ *    section_id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+ *    course_id           uuid NOT NULL REFERENCES courses(course_id) ON DELETE CASCADE,
+ *    section_label       text NOT NULL DEFAULT 'A',
+ *    section_type        text NOT NULL DEFAULT 'regular',   -- 'regular' | 'shared'
+ *    primary_program_id  uuid,                              -- for 'regular' sections
+ *    program_ids         text[] DEFAULT '{}',               -- for 'shared' sections
+ *    day_pattern         text,
+ *    time_start          text,
+ *    time_end            text,
+ *    room                text,
+ *    schedule_label      text,
+ *    has_lab             boolean DEFAULT false,
+ *    lab_day_pattern     text,
+ *    lab_time_start      text,
+ *    lab_time_end        text,
+ *    lab_room            text,
+ *    teacher_id          uuid,
+ *    academic_year       text DEFAULT '2025-2026',
+ *    semester            text,
+ *    year_level          text,
+ *    created_at          timestamptz DEFAULT now(),
+ *    UNIQUE (course_id, section_label)
+ *  );
+ *
+ *  CREATE TABLE student_section_enrollments (
+ *    id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+ *    section_id          uuid NOT NULL REFERENCES course_sections(section_id) ON DELETE CASCADE,
+ *    student_id          uuid NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+ *    enrollment_status   text DEFAULT 'Enrolled',
+ *    final_grade         numeric,
+ *    created_at          timestamptz DEFAULT now(),
+ *    UNIQUE (section_id, student_id)
+ *  );
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ *
+ * Navigation flow:
+ *   Programs → Courses (of selected program) → Sections (of selected course)
+ *
+ * Sections support:
+ *   • Regular: one program assigned per section  (e.g. ITC 110 - Section A → BSCS)
+ *   • Shared:  multiple programs share a section (e.g. NSTP 1 - Shared → BSCS + BSIT + BSBA)
+ *   • Each section has its own schedule, teacher, and student roster
  */
 
 import React, { useState, useEffect, useCallback } from "react";
 import { supabase }                                 from "../../supabaseClient";
-import { programApi }                               from "../../lib/api";
+import { departmentApi, programApi }                from "../../lib/api";
 import { Badge, Btn, Input, Sel, FF }               from "../../components/ui";
 import LMSGrid                                      from "../../components/LMSGrid";
 import TopBar                                       from "../../components/TopBar";
@@ -94,6 +134,7 @@ const DayToggleButtons = ({ value, onChange }) => {
 // ── Schedule label builder ─────────────────────────────────────────────────────
 function buildScheduleLabel(days, timeStart, timeEnd) {
   if (!days || !timeStart || !timeEnd) return "";
+  // Convert HH:MM → H:MM AM/PM
   const fmt = (t) => {
     if (!t) return t;
     const [hh, mm] = t.split(":").map(Number);
@@ -141,14 +182,8 @@ function schedulesConflict(labelA, labelB) {
   return daysOverlap(a.days, b.days) && timesOverlap(a.timeRange, b.timeRange);
 }
 
-// ── Derive the alphabetic prefix from a course code ───────────────────────────
-// "ITC 110" → "ITC" | "CS101" → "CS" | "GCAS 1" → "GCAS"
-function codePrefix(courseCode) {
-  return (courseCode || "").match(/^[A-Za-z]+/)?.[0]?.toUpperCase() || "OTHER";
-}
-
-const YEAR_LEVELS  = ["1st Year","2nd Year","3rd Year","4th Year","5th Year"];
-const SEMESTERS    = ["1st Semester","2nd Semester","Summer"];
+const YEAR_LEVELS = ["1st Year","2nd Year","3rd Year","4th Year","5th Year"];
+const SEMESTERS   = ["1st Semester","2nd Semester","Summer"];
 const QUICK_LABELS = ["A","B","C","D","E","F"];
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -159,42 +194,42 @@ export default function SubAdminCourseManagement({ user, users = [] }) {
   const students  = users.filter(u => u.role === "student");
 
   // ── Navigation ───────────────────────────────────────────────────────────────
-  // level: "codes" | "course" | "section"
-  const [level,      setLevel]      = useState("codes");
-  const [selCode,    setSelCode]    = useState(null);   // e.g. "ITC"
+  const [level,      setLevel]      = useState("prog");   // "prog" | "course" | "section"
+  const [selProg,    setSelProg]    = useState(null);
   const [selCourse,  setSelCourse]  = useState(null);
   const [selSection, setSelSection] = useState(null);
 
   // ── Data ─────────────────────────────────────────────────────────────────────
-  const [codeGroups,         setCodeGroups]         = useState([]);  // [{prefix, count}]
-  const [allCourses,         setAllCourses]          = useState([]);  // flat list, all active
-  const [courses,            setCourses]             = useState([]);  // filtered by selCode
-  const [sections,           setSections]            = useState([]);
-  const [sectionEnrollments, setSectionEnrollments]  = useState([]);
-  const [progs,              setProgs]               = useState([]);  // for section form dropdowns
-  const [loading,            setLoading]             = useState(false);
-  const [toast,              setToast]               = useState({ msg: "", type: "success" });
+  const [progs,              setProgs]              = useState([]);
+  const [courses,            setCourses]            = useState([]);
+  const [sections,           setSections]           = useState([]);
+  const [sectionEnrollments, setSectionEnrollments] = useState([]);
+  const [loading,            setLoading]            = useState(false);
+  const [toast,              setToast]              = useState({ msg: "", type: "success" });
 
   // ── Section form state ────────────────────────────────────────────────────────
-  const blankSectForm = () => ({
+  const blankSectForm = (prog) => ({
     sectionLabel:      "A",
     useCustomLabel:    false,
     customLabel:       "",
     sectionType:       "regular",
-    programId:         "",
+    programId:         prog?.programId || "",
     sharedProgramIds:  [],
     yearLevel:         "",
     semester:          "",
+    // Lecture schedule
     days: "MWF", timeStart: "", timeEnd: "", room: "",
+    // Lab
     hasLab: false, labDays: "", labTimeStart: "", labTimeEnd: "", labRoom: "",
+    // Teacher
     teacherId: "",
   });
 
-  const [sectForm,         setSectForm]         = useState(() => blankSectForm());
-  const [editingSectionId, setEditingSectionId] = useState(null);
-  const [savingSection,    setSavingSection]    = useState(false);
-  const [deletingSection,  setDeletingSection]  = useState(null);
-  const [sectPane,         setSectPane]         = useState("form"); // "form" | "enroll"
+  const [sectForm,          setSectForm]          = useState(() => blankSectForm(null));
+  const [editingSectionId,  setEditingSectionId]  = useState(null);
+  const [savingSection,     setSavingSection]     = useState(false);
+  const [deletingSection,   setDeletingSection]   = useState(null);
+  const [sectPane,          setSectPane]          = useState("form"); // "form" | "enroll"
 
   // ── Enroll state ─────────────────────────────────────────────────────────────
   const [selStudents,      setSelStudents]      = useState([]);
@@ -208,83 +243,77 @@ export default function SubAdminCourseManagement({ user, users = [] }) {
     setTimeout(() => setToast({ msg: "", type: "success" }), 4500);
   };
 
-  // ── Init: load all active courses + programs for section form ─────────────────
+  // ── Init ─────────────────────────────────────────────────────────────────────
   useEffect(() => {
     (async () => {
       setLoading(true);
       try {
-        await Promise.all([loadAllCourses(), loadProgsForForm()]);
+        const scopeRef = user.subAdminScopeRef || "";
+        const res = await departmentApi.getList({ size: 200 });
+        const match = res.items.find(d =>
+          d.name.toLowerCase() === scopeRef.toLowerCase() ||
+          d.code.toLowerCase() === scopeRef.toLowerCase()
+        );
+        if (match) {
+          await loadProgs(match.departmentId);
+        } else {
+          const pRes = await programApi.getList({ size: 200 });
+          setProgs(pRes.items ?? []);
+        }
       } catch (e) { showToast(e.message, "error"); }
       setLoading(false);
     })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user._uuid]);
 
-  // Load every active course, derive prefix groups
-  const loadAllCourses = useCallback(async () => {
-    const { data: rawCourses, error } = await supabase
-      .from("courses")
-      .select("course_id, course_code, course_name, units, is_active")
-      .eq("is_active", true)
-      .order("course_code", { ascending: true });
-    if (error) throw new Error(error.message);
-
-    const courseIds = (rawCourses || []).map(c => c.course_id);
-
-    // Fetch schedules for year / semester labels
-    let schedMap = {};
-    if (courseIds.length) {
-      const { data: schData } = await supabase
-        .from("schedules")
-        .select("course_id, year_level, semester")
-        .in("course_id", courseIds);
-      (schData || []).forEach(s => { schedMap[s.course_id] = s; });
-    }
-
-    // Section counts per course
-    let sectionCountMap = {};
-    if (courseIds.length) {
-      const { data: scData } = await supabase
-        .from("course_sections")
-        .select("course_id, section_id")
-        .in("course_id", courseIds);
-      (scData || []).forEach(r => {
-        sectionCountMap[r.course_id] = (sectionCountMap[r.course_id] || 0) + 1;
-      });
-    }
-
-    const normalized = (rawCourses || []).map(c => ({
-      id:           c.course_code,   // LMSGrid key
-      _uuid:        c.course_id,
-      code:         c.course_code,
-      name:         c.course_name,
-      units:        c.units,
-      yearLevel:    schedMap[c.course_id]?.year_level || "",
-      semester:     schedMap[c.course_id]?.semester   || "",
-      sectionCount: sectionCountMap[c.course_id] || 0,
-    }));
-
-    setAllCourses(normalized);
-
-    // Build prefix groups
-    const prefixMap = {};
-    normalized.forEach(c => {
-      const p = codePrefix(c.code);
-      prefixMap[p] = (prefixMap[p] || 0) + 1;
-    });
-    const groups = Object.entries(prefixMap)
-      .map(([prefix, count]) => ({ id: prefix, prefix, count }))
-      .sort((a, b) => a.prefix.localeCompare(b.prefix));
-
-    setCodeGroups(groups);
+  const loadProgs = useCallback(async (dId) => {
+    const res = await programApi.getList({ size: 200 });
+    setProgs((res.items ?? []).filter(p => p.departmentId === dId));
   }, []);
 
-  // Load all programs for section-form dropdowns (unchanged logic)
-  const loadProgsForForm = useCallback(async () => {
+  // ── Load courses (with section counts) ──────────────────────────────────────
+  const loadCourses = useCallback(async (programId) => {
+    setLoading(true);
     try {
-      const res = await programApi.getList({ size: 200 });
-      setProgs(res.items ?? []);
-    } catch (_) { /* non-fatal */ }
+      const { data: mapData, error: mapErr } = await supabase
+        .from("course_program_map")
+        .select(`id, year_level, semester, courses ( course_id, course_code, course_name, units, status, is_active, student_limit )`)
+        .eq("program_id", programId)
+        .order("id", { ascending: true });
+      if (mapErr) throw new Error(mapErr.message);
+
+      const courseRows = (mapData ?? []).filter(m => m.courses?.is_active);
+      const courseIds  = courseRows.map(m => m.courses.course_id);
+
+      // Count sections per course
+      let sectionCountMap = {};
+      if (courseIds.length) {
+        const { data: scData } = await supabase
+          .from("course_sections")
+          .select("course_id, section_id")
+          .in("course_id", courseIds);
+        (scData || []).forEach(r => {
+          sectionCountMap[r.course_id] = (sectionCountMap[r.course_id] || 0) + 1;
+        });
+      }
+
+      setCourses(courseRows.map(m => ({
+        id:            m.courses.course_code,    // LMSGrid selectedId key
+        _uuid:         m.courses.course_id,
+        _mapYearLevel: m.year_level,
+        _mapSemester:  m.semester,
+        code:          m.courses.course_code,
+        name:          m.courses.course_name,
+        units:         m.courses.units,
+        status:        m.courses.status || "Ongoing",
+        programId:     programId,
+        yearLevel:     m.year_level || "",
+        semester:      m.semester   || "",
+        sectionCount:  sectionCountMap[m.courses.course_id] || 0,
+        studentLimit:  m.courses.student_limit ?? null,
+      })));
+    } catch (e) { showToast(e.message, "error"); }
+    setLoading(false);
   }, []);
 
   // ── Load sections ────────────────────────────────────────────────────────────
@@ -298,6 +327,7 @@ export default function SubAdminCourseManagement({ user, users = [] }) {
         .order("section_label", { ascending: true });
       if (error) throw new Error(error.message);
 
+      // Resolve teacher names
       const teacherUuids = [...new Set((data || []).map(s => s.teacher_id).filter(Boolean))];
       let teacherNameMap = {};
       if (teacherUuids.length) {
@@ -306,6 +336,7 @@ export default function SubAdminCourseManagement({ user, users = [] }) {
         (tUsers || []).forEach(u => { teacherNameMap[u.user_id] = u.full_name; });
       }
 
+      // Resolve program names for all referenced program IDs
       const allPIds = [...new Set((data || []).flatMap(s =>
         s.section_type === "shared"
           ? (s.program_ids || [])
@@ -320,7 +351,7 @@ export default function SubAdminCourseManagement({ user, users = [] }) {
 
       const enriched = (data || []).map(s => ({
         ...s,
-        id:           s.section_id,
+        id:           s.section_id,   // needed by LMSGrid selectedId
         teacherName:  s.teacher_id ? (teacherNameMap[s.teacher_id] || "Unassigned") : "Unassigned",
         programLabel: s.section_type === "shared"
           ? (s.program_ids || []).map(id => progMap[id]?.code || id).join(" · ")
@@ -331,6 +362,7 @@ export default function SubAdminCourseManagement({ user, users = [] }) {
       }));
       setSections(enriched);
 
+      // Load enrollments for all sections of this course
       const sectionIds = enriched.map(s => s.section_id);
       if (sectionIds.length) {
         const { data: enData } = await supabase
@@ -346,30 +378,27 @@ export default function SubAdminCourseManagement({ user, users = [] }) {
   }, []);
 
   // ── Navigation helpers ────────────────────────────────────────────────────────
-  const goCodeLevel = () => {
-    setLevel("codes");
-    setSelCode(null); setSelCourse(null); setSelSection(null);
+  const goProgLevel = () => {
+    setLevel("prog");
+    setSelProg(null); setSelCourse(null); setSelSection(null);
     setCourses([]); setSections([]); setSectionEnrollments([]);
   };
-
   const goCourseLevel = () => {
     setLevel("course");
     setSelCourse(null); setSelSection(null);
     setSections([]); setSectionEnrollments([]);
   };
 
-  const drillCode = (prefix) => {
-    setSelCode(prefix);
-    setSelCourse(null); setSelSection(null);
+  const drillProg = async (prog) => {
+    setSelProg(prog); setSelCourse(null); setSelSection(null);
     setLevel("course");
-    const filtered = allCourses.filter(c => codePrefix(c.code) === prefix);
-    setCourses(filtered);
+    await loadCourses(prog.programId);
   };
 
   const drillSections = async (course) => {
     setSelCourse(course); setSelSection(null);
     setEditingSectionId(null);
-    setSectForm(blankSectForm());
+    setSectForm(blankSectForm(selProg));
     setSectPane("form");
     setLevel("section");
     await loadSections(course._uuid);
@@ -405,7 +434,7 @@ export default function SubAdminCourseManagement({ user, users = [] }) {
 
   const cancelEdit = () => {
     setEditingSectionId(null);
-    setSectForm(blankSectForm());
+    setSectForm(blankSectForm(selProg));
   };
 
   // ── Save section ──────────────────────────────────────────────────────────────
@@ -428,9 +457,11 @@ export default function SubAdminCourseManagement({ user, users = [] }) {
 
     setSavingSection(true);
     try {
+      // Build schedule label
       let schedLabel = buildScheduleLabel(sectForm.days, sectForm.timeStart, sectForm.timeEnd);
-      if (sectForm.hasLab) schedLabel += ` | Lab: ${buildScheduleLabel(sectForm.labDays, sectForm.labTimeStart, sectForm.labTimeEnd)}${sectForm.labRoom ? ` (${sectForm.labRoom})` : ""}`;
+      if (sectForm.hasLab)  schedLabel += ` | Lab: ${buildScheduleLabel(sectForm.labDays, sectForm.labTimeStart, sectForm.labTimeEnd)}${sectForm.labRoom ? ` (${sectForm.labRoom})` : ""}`;
 
+      // Schedule conflict check for teacher
       if (sectForm.teacherId && schedLabel) {
         const { data: otherSections } = await supabase
           .from("course_sections")
@@ -461,9 +492,9 @@ export default function SubAdminCourseManagement({ user, users = [] }) {
         room:               sectForm.room || null,
         schedule_label:     schedLabel,
         has_lab:            sectForm.hasLab,
-        lab_day_pattern:    sectForm.hasLab ? sectForm.labDays       : null,
-        lab_time_start:     sectForm.hasLab ? sectForm.labTimeStart  : null,
-        lab_time_end:       sectForm.hasLab ? sectForm.labTimeEnd    : null,
+        lab_day_pattern:    sectForm.hasLab ? sectForm.labDays    : null,
+        lab_time_start:     sectForm.hasLab ? sectForm.labTimeStart : null,
+        lab_time_end:       sectForm.hasLab ? sectForm.labTimeEnd   : null,
         lab_room:           sectForm.hasLab ? (sectForm.labRoom || null) : null,
         teacher_id:         sectForm.teacherId || null,
         year_level:         sectForm.yearLevel || null,
@@ -484,9 +515,11 @@ export default function SubAdminCourseManagement({ user, users = [] }) {
 
       await loadSections(selCourse._uuid);
       setEditingSectionId(null);
+
+      // Suggest next unused label
       const taken = sections.map(s => s.section_label);
       const next  = QUICK_LABELS.find(l => !taken.includes(l)) || "A";
-      setSectForm({ ...blankSectForm(), sectionLabel: next });
+      setSectForm({ ...blankSectForm(selProg), sectionLabel: next });
     } catch (e) { showToast(e.message, "error"); }
     setSavingSection(false);
   };
@@ -520,6 +553,20 @@ export default function SubAdminCourseManagement({ user, users = [] }) {
   // ── Enroll students ───────────────────────────────────────────────────────────
   const enrollStudents = async () => {
     if (!selSection || selStudents.length === 0) return;
+
+    // Enforce student limit set on the course
+    const limit = selCourse?.studentLimit ?? null;
+    if (limit != null) {
+      const currentCount = sectionEnrollments.filter(e => e.section_id === selSection.section_id).length;
+      const available = limit - currentCount;
+      if (available <= 0) {
+        showToast(`This section is full — the ${limit}-student limit has been reached.`, "error"); return;
+      }
+      if (selStudents.length > available) {
+        showToast(`Only ${available} spot${available !== 1 ? "s" : ""} remaining (limit: ${limit}). Reduce your selection.`, "error"); return;
+      }
+    }
+
     setEnrolling(true);
     let enrolled = 0, skipped = 0;
     try {
@@ -565,7 +612,7 @@ export default function SubAdminCourseManagement({ user, users = [] }) {
     ? sectionEnrollments
         .filter(e => e.section_id === selSection.section_id)
         .map(e => {
-          const st   = students.find(s => String(s._uuid) === String(e.student_id));
+          const st = students.find(s => String(s._uuid) === String(e.student_id));
           const prog = progs.find(p => p.programId === st?.programId);
           return {
             id:          e.id,
@@ -584,6 +631,9 @@ export default function SubAdminCourseManagement({ user, users = [] }) {
       : []
   );
 
+  // Eligible students depend on section type.
+  // Coerce IDs to String — primary_program_id is stored as text in the DB
+  // (e.g. "1") but s.programId may arrive as a number from the API.
   const eligibleStudents = selSection
     ? students.filter(s => {
         if (enrolledUuids.has(String(s._uuid))) return false;
@@ -609,34 +659,34 @@ export default function SubAdminCourseManagement({ user, users = [] }) {
   }));
 
   // ── Grid column definitions ───────────────────────────────────────────────────
-
-  // Level 1 — Code prefix table
-  const codeCols = [
-    { field: "prefix", header: "Code",    width: 110,
+  const progCols = [
+    { field: "code",    header: "Code",    width: 80 },
+    { field: "name",    header: "Program" },
+    { field: "description", header: "Description" },
+    { field: "isActive", header: "Status", width: 80,
       cellRenderer: v => (
-        <span style={{ fontWeight: 800, fontSize: 13, color: "#a5b4fc", letterSpacing: "0.04em" }}>{v}</span>
-      )},
-    { field: "count",  header: "Courses", width: 90,
-      cellRenderer: v => (
-        <span style={{ fontWeight: 700, fontSize: 12, color: v > 0 ? "#34d399" : "#475569" }}>
-          {v} course{v !== 1 ? "s" : ""}
+        <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 9999,
+          background: v === 1 ? "rgba(16,185,129,.2)" : "rgba(239,68,68,.2)",
+          color:      v === 1 ? "#34d399"             : "#f87171" }}>
+          {v === 1 ? "Active" : "Inactive"}
         </span>
       )},
-    { field: "prefix", header: "Actions", width: 120, sortable: false,
-      cellRenderer: (_, row) => (
-        <Btn size="sm" onClick={() => drillCode(row.prefix)}>Manage →</Btn>
-      )},
+    { field: "programId", header: "Actions", width: 100, sortable: false,
+      cellRenderer: (_, row) => <Btn size="sm" onClick={() => drillProg(row)}>Manage →</Btn> },
   ];
 
-  // Level 2 — Courses table
   const courseCols = [
-    { field: "code",    header: "Code",     width: 90 },
+    { field: "code",    header: "Code",     width: 80 },
     { field: "name",    header: "Course" },
     { field: "units",   header: "Units",    width: 55 },
     { field: "yearLevel", header: "Year",   width: 90,
       cellRenderer: v => v ? <InfoPill label={v} color="#6366f1" /> : null },
     { field: "semester", header: "Semester", width: 120,
       cellRenderer: v => v ? <InfoPill label={v} color={v === "1st Semester" ? "#0ea5e9" : v === "2nd Semester" ? "#8b5cf6" : "#f59e0b"} /> : null },
+    { field: "studentLimit", header: "Limit / Section", width: 120,
+      cellRenderer: v => v != null
+        ? <span style={{ fontWeight: 700, fontSize: 11, color: "#fbbf24" }}>👥 {v} max</span>
+        : <span style={{ fontSize: 11, color: "#475569" }}>Unlimited</span> },
     { field: "sectionCount", header: "Sections", width: 90,
       cellRenderer: v => (
         <span style={{ fontSize: 11, fontWeight: 700, color: v > 0 ? "#34d399" : "#475569" }}>
@@ -651,7 +701,6 @@ export default function SubAdminCourseManagement({ user, users = [] }) {
       )},
   ];
 
-  // Level 3 — Sections table (unchanged)
   const sectionCols = [
     { field: "section_label", header: "Section", width: 85,
       cellRenderer: (v) => (
@@ -659,7 +708,7 @@ export default function SubAdminCourseManagement({ user, users = [] }) {
           {selCourse?.code} – {v}
         </span>
       )},
-    { field: "section_type", header: "Type",      width: 100, cellRenderer: v => <TypeBadge type={v} /> },
+    { field: "section_type", header: "Type", width: 100, cellRenderer: v => <TypeBadge type={v} /> },
     { field: "programLabel", header: "Program(s)" },
     { field: "schedule_label", header: "Schedule", width: 190,
       cellRenderer: v => v
@@ -669,17 +718,21 @@ export default function SubAdminCourseManagement({ user, users = [] }) {
       cellRenderer: v => (
         <span style={{ color: v === "Unassigned" ? "#475569" : "#34d399", fontWeight: 600, fontSize: 12 }}>{v}</span>
       )},
-    { field: "room",       header: "Room",     width: 80 },
-    { field: "year_level", header: "Year",     width: 80,
+    { field: "room", header: "Room", width: 80 },
+    { field: "year_level", header: "Year", width: 80,
       cellRenderer: v => v ? <InfoPill label={v} color="#6366f1" /> : null },
-    { field: "semester",   header: "Semester", width: 115,
+    { field: "semester", header: "Semester", width: 115,
       cellRenderer: v => v ? (
         <InfoPill label={v} color={v === "1st Semester" ? "#0ea5e9" : v === "2nd Semester" ? "#8b5cf6" : "#f59e0b"} />
       ) : null },
-    { field: "enrollmentCount", header: "Enrolled", width: 75,
-      cellRenderer: v => (
-        <span style={{ fontWeight: 700, color: v > 0 ? "#34d399" : "#475569", fontSize: 12 }}>{v}</span>
-      )},
+    { field: "enrollmentCount", header: "Enrolled", width: 110,
+      cellRenderer: (v) => {
+        const limit = selCourse?.studentLimit ?? null;
+        if (limit == null) return <span style={{ fontWeight: 700, color: v > 0 ? "#34d399" : "#475569", fontSize: 12 }}>{v}</span>;
+        const remaining = limit - v;
+        const color = remaining <= 0 ? "#f87171" : remaining <= 5 ? "#fbbf24" : "#34d399";
+        return <span style={{ fontWeight: 700, fontSize: 11, color }}>{v} / {limit}{remaining <= 0 ? " 🚫" : ""}</span>;
+      }},
     { field: "section_id", header: "Actions", width: 120, sortable: false,
       cellRenderer: (v, row) => (
         <div style={{ display: "flex", gap: 4 }}>
@@ -711,9 +764,9 @@ export default function SubAdminCourseManagement({ user, users = [] }) {
 
   // ── Subtitle ──────────────────────────────────────────────────────────────────
   const subtitle =
-    level === "codes"   ? `${codeGroups.length} code group${codeGroups.length !== 1 ? "s" : ""} · ${allCourses.length} total courses` :
-    level === "course"  ? `${selCode} · ${courses.length} course${courses.length !== 1 ? "s" : ""}` :
-    `${selCode} · ${selCourse?.name} · ${sections.length} section${sections.length !== 1 ? "s" : ""}`;
+    level === "prog"    ? `${progs.length} program${progs.length !== 1 ? "s" : ""}${user.subAdminScopeRef ? ` · ${user.subAdminScopeRef}` : ""}` :
+    level === "course"  ? `${selProg?.name} · ${courses.length} course${courses.length !== 1 ? "s" : ""}` :
+    `${selProg?.name} · ${selCourse?.name} · ${sections.length} section${sections.length !== 1 ? "s" : ""}`;
 
   // ── Render ────────────────────────────────────────────────────────────────────
   return (
@@ -721,10 +774,10 @@ export default function SubAdminCourseManagement({ user, users = [] }) {
 
       <TopBar title="Course Management" subtitle={subtitle}
         actions={
-          level !== "codes" && (
+          level !== "prog" && (
             <Btn variant="secondary" size="sm"
-              onClick={level === "course" ? goCodeLevel : goCourseLevel}>
-              ← {level === "course" ? "Back to Codes" : `Back to ${selCode || "Courses"}`}
+              onClick={level === "course" ? goProgLevel : goCourseLevel}>
+              ← {level === "course" ? "Back to Programs" : `Back to ${selProg?.name || "Courses"}`}
             </Btn>
           )
         }
@@ -732,16 +785,16 @@ export default function SubAdminCourseManagement({ user, users = [] }) {
 
       {/* Breadcrumb */}
       <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, padding: "6px 18px", background: "#1e293b", borderBottom: "1px solid #334155", flexShrink: 0 }}>
-        <button onClick={goCodeLevel}
-          style={{ background: "none", border: "none", color: level === "codes" ? "#f1f5f9" : "#6366f1", fontWeight: 700, cursor: level !== "codes" ? "pointer" : "default", fontFamily: "inherit", fontSize: 12 }}>
-          🗂️ Codes
+        <button onClick={goProgLevel}
+          style={{ background: "none", border: "none", color: level === "prog" ? "#f1f5f9" : "#6366f1", fontWeight: 700, cursor: level !== "prog" ? "pointer" : "default", fontFamily: "inherit", fontSize: 12 }}>
+          📚 Programs
         </button>
-        {selCode && (
+        {selProg && (
           <>
             <span style={{ color: "#334155" }}>›</span>
             <button onClick={level === "section" ? goCourseLevel : undefined}
               style={{ background: "none", border: "none", color: level === "course" ? "#f1f5f9" : "#6366f1", fontWeight: 700, cursor: level === "section" ? "pointer" : "default", fontFamily: "inherit", fontSize: 12 }}>
-              {selCode}
+              {selProg.name}
             </button>
           </>
         )}
@@ -773,19 +826,19 @@ export default function SubAdminCourseManagement({ user, users = [] }) {
       <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
 
         {/* ══════════════════════════════════════════════════════════════
-            LEVEL: CODES
+            LEVEL: PROGRAMS
         ══════════════════════════════════════════════════════════════ */}
-        {level === "codes" && (
+        {level === "prog" && (
           <div style={S.grid}>
             <div style={{ ...S.label, flexShrink: 0 }}>
-              {codeGroups.length} Code Groups — click "Manage →" to view courses and manage sections
+              {progs.length} Programs — click "Manage →" to view courses and manage sections
             </div>
             <div style={{ flex: 1, overflow: "hidden" }}>
               {loading
                 ? <div style={{ color: "#475569", textAlign: "center", paddingTop: 40 }}>Loading…</div>
-                : codeGroups.length === 0
-                ? <div style={{ color: "#475569", textAlign: "center", paddingTop: 40, fontSize: 13 }}>No active courses found.</div>
-                : <LMSGrid columns={codeCols} rowData={codeGroups} height="100%" />}
+                : progs.length === 0
+                ? <div style={{ color: "#475569", textAlign: "center", paddingTop: 40, fontSize: 13 }}>No programs found for your department.</div>
+                : <LMSGrid columns={progCols} rowData={progs} height="100%" />}
             </div>
           </div>
         )}
@@ -796,20 +849,20 @@ export default function SubAdminCourseManagement({ user, users = [] }) {
         {level === "course" && (
           <div style={S.grid}>
             <div style={{ ...S.label, flexShrink: 0 }}>
-              {courses.length} Course{courses.length !== 1 ? "s" : ""} · {selCode} — click "Sections →" to manage sections for a course
+              {courses.length} Courses · {selProg?.name} — click "Sections →" to manage sections for a course
             </div>
             <div style={{ flex: 1, overflow: "hidden" }}>
               {loading
                 ? <div style={{ color: "#475569", textAlign: "center", paddingTop: 40 }}>Loading…</div>
                 : courses.length === 0
-                ? <div style={{ color: "#475569", textAlign: "center", paddingTop: 40, fontSize: 13 }}>No active courses with the "{selCode}" prefix.</div>
+                ? <div style={{ color: "#475569", textAlign: "center", paddingTop: 40, fontSize: 13 }}>No active courses in this program.</div>
                 : <LMSGrid columns={courseCols} rowData={courses} height="100%" onRowClick={drillSections} />}
             </div>
           </div>
         )}
 
         {/* ══════════════════════════════════════════════════════════════
-            LEVEL: SECTIONS  (unchanged layout)
+            LEVEL: SECTIONS
         ══════════════════════════════════════════════════════════════ */}
         {level === "section" && (
           <>
@@ -817,6 +870,7 @@ export default function SubAdminCourseManagement({ user, users = [] }) {
             <div style={S.pane}>
               <PH title={`📋 ${selCourse?.code}`} sub={selCourse?.name} />
 
+              {/* Pane tab switcher */}
               <div style={{ display: "flex", gap: 4, background: "#0f172a", borderRadius: 8, padding: 4 }}>
                 {[
                   { key: "form",   label: editingSectionId ? "✎ Edit Section" : "✦ Add Section" },
@@ -834,10 +888,13 @@ export default function SubAdminCourseManagement({ user, users = [] }) {
                 ))}
               </div>
 
-              {/* TAB: ADD / EDIT SECTION */}
+              {/* ─────────────────────────────────────────────────────────
+                  TAB: ADD / EDIT SECTION
+              ───────────────────────────────────────────────────────── */}
               {sectPane === "form" && (
                 <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
 
+                  {/* Edit banner */}
                   {editingSectionId && (
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
                       background: "rgba(99,102,241,.1)", border: "1px solid rgba(99,102,241,.3)",
@@ -852,7 +909,7 @@ export default function SubAdminCourseManagement({ user, users = [] }) {
                     </div>
                   )}
 
-                  {/* Section Label */}
+                  {/* ── Section Label ── */}
                   <div style={S.sec}>
                     <div style={S.sHdr}>🏷️ Section Label</div>
                     <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginBottom: 6 }}>
@@ -885,7 +942,7 @@ export default function SubAdminCourseManagement({ user, users = [] }) {
                     )}
                   </div>
 
-                  {/* Section Type */}
+                  {/* ── Section Type ── */}
                   <div style={S.sec}>
                     <div style={S.sHdr}>📌 Section Type</div>
                     <div style={{ display: "flex", gap: 6 }}>
@@ -913,7 +970,7 @@ export default function SubAdminCourseManagement({ user, users = [] }) {
                     )}
                   </div>
 
-                  {/* Program Assignment */}
+                  {/* ── Program Assignment ── */}
                   <div style={S.sec}>
                     <div style={S.sHdr}>
                       {sectForm.sectionType === "shared" ? "🔗 Programs Sharing This Section" : "📚 Assigned Program"}
@@ -965,7 +1022,7 @@ export default function SubAdminCourseManagement({ user, users = [] }) {
                     )}
                   </div>
 
-                  {/* Year / Semester */}
+                  {/* ── Year / Semester ── */}
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
                     <FF label="Year Level">
                       <Sel value={sectForm.yearLevel} onChange={e => setSF({ yearLevel: e.target.value })}>
@@ -981,7 +1038,7 @@ export default function SubAdminCourseManagement({ user, users = [] }) {
                     </FF>
                   </div>
 
-                  {/* Schedule */}
+                  {/* ── Schedule ── */}
                   <div style={S.sec}>
                     <div style={S.sHdr}>🗓️ Schedule</div>
                     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -1031,7 +1088,7 @@ export default function SubAdminCourseManagement({ user, users = [] }) {
                     </div>
                   </div>
 
-                  {/* Teacher */}
+                  {/* ── Teacher ── */}
                   <div style={S.sec}>
                     <div style={S.sHdr}>👩‍🏫 Assign Teacher</div>
                     {sectForm.teacherId && (
@@ -1056,10 +1113,13 @@ export default function SubAdminCourseManagement({ user, users = [] }) {
                 </div>
               )}
 
-              {/* TAB: ENROLL STUDENTS */}
+              {/* ─────────────────────────────────────────────────────────
+                  TAB: ENROLL STUDENTS
+              ───────────────────────────────────────────────────────── */}
               {sectPane === "enroll" && selSection && (
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
 
+                  {/* Section info banner */}
                   <div style={{
                     background: selSection.section_type === "shared" ? "rgba(245,158,11,.08)" : "rgba(99,102,241,.08)",
                     border: `1px solid ${selSection.section_type === "shared" ? "rgba(245,158,11,.25)" : "rgba(99,102,241,.25)"}`,
@@ -1072,14 +1132,27 @@ export default function SubAdminCourseManagement({ user, users = [] }) {
                     {selSection.schedule_label && (
                       <div style={{ fontSize: 11, color: "#60a5fa", marginTop: 2 }}>🕐 {selSection.schedule_label.split(" | Lab:")[0]}</div>
                     )}
-                    <div style={{ display: "flex", gap: 10, marginTop: 4 }}>
+                    <div style={{ display: "flex", gap: 10, marginTop: 4, flexWrap: "wrap" }}>
                       <span style={{ fontSize: 11, color: "#94a3b8" }}>
                         {sectionEnrollments.filter(e => e.section_id === selSection.section_id).length} enrolled
                       </span>
                       <TypeBadge type={selSection.section_type} />
+                      {selCourse?.studentLimit != null && (() => {
+                        const enrolledCount = sectionEnrollments.filter(e => e.section_id === selSection.section_id).length;
+                        const remaining = selCourse.studentLimit - enrolledCount;
+                        return (
+                          <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 9999,
+                            background: remaining <= 0 ? "rgba(239,68,68,.15)" : remaining <= 5 ? "rgba(245,158,11,.15)" : "rgba(16,185,129,.15)",
+                            color: remaining <= 0 ? "#f87171" : remaining <= 5 ? "#fbbf24" : "#34d399",
+                            border: `1px solid ${remaining <= 0 ? "rgba(239,68,68,.3)" : remaining <= 5 ? "rgba(245,158,11,.3)" : "rgba(16,185,129,.3)"}` }}>
+                            {remaining <= 0 ? "🚫 Full" : `👥 ${remaining} / ${selCourse.studentLimit} spots left`}
+                          </span>
+                        );
+                      })()}
                     </div>
                   </div>
 
+                  {/* Filters */}
                   <Sel value={enrollYearFilter} onChange={e => { setEnrollYearFilter(e.target.value); setSelStudents([]); }}>
                     <option value="">All Year Levels</option>
                     {YEAR_LEVELS.map(y => <option key={y}>{y}</option>)}
@@ -1142,6 +1215,7 @@ export default function SubAdminCourseManagement({ user, users = [] }) {
             {/* ── Right Area ── */}
             <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
 
+              {/* Sections grid */}
               <div style={{
                 flex: selSection ? "0 0 52%" : 1, padding: "14px 16px",
                 display: "flex", flexDirection: "column", overflow: "hidden",
@@ -1178,6 +1252,7 @@ export default function SubAdminCourseManagement({ user, users = [] }) {
                 </div>
               </div>
 
+              {/* Enrolled students in selected section */}
               {selSection && (
                 <div style={{ flex: 1, padding: "12px 16px", display: "flex", flexDirection: "column", overflow: "hidden", background: "#0a0f1a", gap: 8 }}>
                   <div style={{ ...S.label, flexShrink: 0 }}>

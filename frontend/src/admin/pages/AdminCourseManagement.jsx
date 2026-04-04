@@ -6,12 +6,15 @@
  *
  * Admin can:
  *   • Navigate courses grouped by alphabetic code prefix (ITC, CS, GCAS, STAT…)
- *   • Add / Edit / Delete courses
+ *   • Add / Edit / Delete courses, including a per-section Student Limit
  *   • "Delete Data" — wipes ALL operational data tied to a course without deleting
  *     the course record itself (sections, enrollments, teacher assignments,
  *     materials, exams/quizzes, schedules)
  *   • Full section management identical to Sub-Admin:
  *       Add / Edit / Delete sections · assign teachers · enroll students
+ *
+ * REQUIRES this column on the courses table (run once in Supabase SQL editor):
+ *   ALTER TABLE courses ADD COLUMN IF NOT EXISTS student_limit integer DEFAULT NULL;
  */
 
 import React, { useState, useEffect, useCallback } from "react";
@@ -159,7 +162,7 @@ function codePrefix(courseCode) {
 const YEAR_LEVELS  = ["1st Year","2nd Year","3rd Year","4th Year","5th Year"];
 const SEMESTERS    = ["1st Semester","2nd Semester","Summer"];
 const QUICK_LABELS = ["A","B","C","D","E","F"];
-const emptyCourse  = { code: "", name: "", units: "3" };
+const emptyCourse  = { code: "", name: "", units: "3", studentLimit: "" }; // "" = unlimited
 const blankSectForm = () => ({
   sectionLabel: "A", useCustomLabel: false, customLabel: "",
   sectionType: "regular", programId: "", sharedProgramIds: [],
@@ -332,7 +335,7 @@ export default function AdminCourseManagement({ courses: globalCourses, setCours
   const loadAllCourses = useCallback(async () => {
     const { data: rawCourses, error } = await supabase
       .from("courses")
-      .select("course_id, course_code, course_name, units, is_active")
+      .select("course_id, course_code, course_name, units, is_active, student_limit")
       .order("course_code", { ascending: true });
     if (error) throw new Error(error.message);
 
@@ -348,6 +351,7 @@ export default function AdminCourseManagement({ courses: globalCourses, setCours
       id: c.course_code, _uuid: c.course_id,
       code: c.course_code, name: c.course_name,
       units: c.units, isActive: c.is_active,
+      studentLimit: c.student_limit ?? null,  // null = unlimited
       sectionCount: sectionCountMap[c.course_id] || 0,
     }));
     setAllCourses(normalized);
@@ -504,15 +508,20 @@ export default function AdminCourseManagement({ courses: globalCourses, setCours
     const code = courseForm.code.trim().toUpperCase();
     const name = courseForm.name.trim();
     if (!code || !name) { showToast("Code and Name are required.", "error"); return; }
+    const limitRaw = courseForm.studentLimit.toString().trim();
+    const limit = limitRaw === "" ? null : parseInt(limitRaw);
+    if (limitRaw !== "" && (isNaN(limit) || limit < 1)) {
+      showToast("Student limit must be a positive number or leave blank for unlimited.", "error"); return;
+    }
     setSavingCourse(true);
     try {
       if (editingCourseId) {
         const { error } = await supabase.from("courses")
-          .update({ course_code: code, course_name: name, units: parseInt(courseForm.units) || 3 })
+          .update({ course_code: code, course_name: name, units: parseInt(courseForm.units) || 3, student_limit: limit })
           .eq("course_id", editingCourseId);
         if (error) throw new Error(error.message);
         const updated = allCourses.map(c => c._uuid === editingCourseId
-          ? { ...c, code, name, id: code, units: parseInt(courseForm.units) || 3 } : c);
+          ? { ...c, code, name, id: code, units: parseInt(courseForm.units) || 3, studentLimit: limit } : c);
         setAllCourses(updated); buildGroups(updated);
         setCourses(updated.filter(c => codePrefix(c.code) === selCode));
         setGlobalCourses(prev => prev.map(c => c._uuid === editingCourseId ? { ...c, code, name, id: code } : c));
@@ -520,10 +529,10 @@ export default function AdminCourseManagement({ courses: globalCourses, setCours
         showToast("Course updated.");
       } else {
         const { data: nc, error: ce } = await supabase.from("courses")
-          .insert({ course_code: code, course_name: name, units: parseInt(courseForm.units) || 3 })
-          .select("course_id, course_code, course_name, units").single();
+          .insert({ course_code: code, course_name: name, units: parseInt(courseForm.units) || 3, student_limit: limit })
+          .select("course_id, course_code, course_name, units, student_limit").single();
         if (ce) { showToast(ce.message.includes("unique") ? "Course code already exists." : ce.message, "error"); setSavingCourse(false); return; }
-        const row = { id: nc.course_code, _uuid: nc.course_id, code: nc.course_code, name: nc.course_name, units: nc.units, isActive: true, sectionCount: 0 };
+        const row = { id: nc.course_code, _uuid: nc.course_id, code: nc.course_code, name: nc.course_name, units: nc.units, studentLimit: nc.student_limit ?? null, isActive: true, sectionCount: 0 };
         const updated = [...allCourses, row].sort((a, b) => a.code.localeCompare(b.code));
         setAllCourses(updated); buildGroups(updated);
         if (selCode === codePrefix(row.code)) setCourses(prev => [...prev, row]);
@@ -728,6 +737,20 @@ export default function AdminCourseManagement({ courses: globalCourses, setCours
   // ── Enroll ────────────────────────────────────────────────────────────────────
   const enrollStudents = async () => {
     if (!selSection || selStudents.length === 0) return;
+
+    // Check student limit on the course
+    const limit = selCourse?.studentLimit ?? null;
+    if (limit != null) {
+      const currentCount = sectionEnrollments.filter(e => e.section_id === selSection.section_id).length;
+      const available = limit - currentCount;
+      if (available <= 0) {
+        showToast(`This section is full — limit of ${limit} students has been reached.`, "error"); return;
+      }
+      if (selStudents.length > available) {
+        showToast(`Only ${available} spot${available !== 1 ? "s" : ""} remaining (limit: ${limit}). Reduce your selection.`, "error"); return;
+      }
+    }
+
     setEnrolling(true); let enrolled = 0, skipped = 0;
     try {
       for (const sId of selStudents) {
@@ -807,6 +830,10 @@ export default function AdminCourseManagement({ courses: globalCourses, setCours
     { field: "units", header: "Units", width: 60 },
     { field: "sectionCount", header: "Sections", width: 90,
       cellRenderer: v => <span style={{ fontWeight: 700, fontSize: 11, color: v > 0 ? "#34d399" : "#475569" }}>{v > 0 ? `${v} section${v !== 1 ? "s" : ""}` : "None"}</span> },
+    { field: "studentLimit", header: "Limit / Section", width: 120,
+      cellRenderer: v => v != null
+        ? <span style={{ fontWeight: 700, fontSize: 12, color: "#fbbf24" }}>👥 {v} max</span>
+        : <span style={{ fontSize: 11, color: "#475569" }}>Unlimited</span> },
     { field: "isActive", header: "Status", width: 80,
       cellRenderer: v => (
         <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 9999,
@@ -818,7 +845,7 @@ export default function AdminCourseManagement({ courses: globalCourses, setCours
       cellRenderer: (_, row) => (
         <div style={{ display: "flex", gap: 4 }} onClick={e => e.stopPropagation()}>
           <Btn size="sm" variant="secondary"
-            onClick={() => { setEditingCourseId(row._uuid); setCourseForm({ code: row.code, name: row.name, units: String(row.units || 3) }); }}>
+            onClick={() => { setEditingCourseId(row._uuid); setCourseForm({ code: row.code, name: row.name, units: String(row.units || 3), studentLimit: row.studentLimit != null ? String(row.studentLimit) : "" }); }}>
             ✏️
           </Btn>
           <Btn size="sm" variant="danger" onClick={() => setConfirmDel({ type: "course", item: row })}>🗑</Btn>
@@ -847,8 +874,18 @@ export default function AdminCourseManagement({ courses: globalCourses, setCours
     { field: "year_level",  header: "Year",     width: 80, cellRenderer: v => v ? <InfoPill label={v} color="#6366f1" /> : null },
     { field: "semester",    header: "Semester", width: 115,
       cellRenderer: v => v ? <InfoPill label={v} color={v === "1st Semester" ? "#0ea5e9" : v === "2nd Semester" ? "#8b5cf6" : "#f59e0b"} /> : null },
-    { field: "enrollmentCount", header: "Enrolled", width: 80,
-      cellRenderer: v => <span style={{ fontWeight: 700, color: v > 0 ? "#34d399" : "#475569", fontSize: 12 }}>{v}</span> },
+    { field: "enrollmentCount", header: "Enrolled", width: 110,
+      cellRenderer: (v, row) => {
+        const limit = selCourse?.studentLimit ?? null;
+        if (limit == null) return <span style={{ fontWeight: 700, color: v > 0 ? "#34d399" : "#475569", fontSize: 12 }}>{v}</span>;
+        const remaining = limit - v;
+        const color = remaining <= 0 ? "#f87171" : remaining <= 5 ? "#fbbf24" : "#34d399";
+        return (
+          <span style={{ fontWeight: 700, fontSize: 11, color }}>
+            {v} / {limit}{remaining <= 0 ? " 🚫" : ""}
+          </span>
+        );
+      }},
     { field: "section_id", header: "Actions", width: 110, sortable: false,
       cellRenderer: (v, row) => (
         <div style={{ display: "flex", gap: 4 }}>
@@ -1033,6 +1070,42 @@ export default function AdminCourseManagement({ courses: globalCourses, setCours
                 <Sel value={courseForm.units} onChange={e => setCourseForm(f => ({ ...f, units: e.target.value }))}>
                   {["1","2","3","4","5","6"].map(u => <option key={u}>{u}</option>)}
                 </Sel>
+              </FF>
+
+              {/* Student limit */}
+              <FF label="Student Limit per Section">
+                <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                  <Input
+                    type="number"
+                    min="1"
+                    value={courseForm.studentLimit}
+                    onChange={e => setCourseForm(f => ({ ...f, studentLimit: e.target.value }))}
+                    placeholder="Leave blank for unlimited"
+                    style={{ flex: 1 }}
+                  />
+                  {courseForm.studentLimit && (
+                    <button
+                      type="button"
+                      onClick={() => setCourseForm(f => ({ ...f, studentLimit: "" }))}
+                      title="Set to unlimited"
+                      style={{ background: "rgba(100,116,139,.15)", border: "1px solid #334155", borderRadius: 6,
+                        color: "#94a3b8", fontSize: 11, fontWeight: 700, padding: "7px 10px",
+                        cursor: "pointer", whiteSpace: "nowrap", fontFamily: "inherit" }}>
+                      ∞ Unlimited
+                    </button>
+                  )}
+                </div>
+                {courseForm.studentLimit && (
+                  <div style={{ fontSize: 11, color: "#fbbf24", marginTop: 4, display: "flex", alignItems: "center", gap: 5 }}>
+                    <span>👥</span>
+                    <span>Max <strong>{courseForm.studentLimit}</strong> students per section of this course</span>
+                  </div>
+                )}
+                {!courseForm.studentLimit && (
+                  <div style={{ fontSize: 11, color: "#475569", marginTop: 4 }}>
+                    ∞ No limit — sections can hold any number of students
+                  </div>
+                )}
               </FF>
               <div style={{ display: "flex", gap: 8 }}>
                 <Btn onClick={saveCourse} disabled={savingCourse} style={{ flex: 1 }}>
@@ -1301,6 +1374,18 @@ export default function AdminCourseManagement({ courses: globalCourses, setCours
                     <div style={{ display: "flex", gap: 10, marginTop: 4 }}>
                       <span style={{ fontSize: 11, color: "#94a3b8" }}>{sectionEnrollments.filter(e => e.section_id === selSection.section_id).length} enrolled</span>
                       <TypeBadge type={selSection.section_type} />
+                      {selCourse?.studentLimit != null && (() => {
+                        const enrolled = sectionEnrollments.filter(e => e.section_id === selSection.section_id).length;
+                        const remaining = selCourse.studentLimit - enrolled;
+                        return (
+                          <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 9999,
+                            background: remaining <= 0 ? "rgba(239,68,68,.15)" : remaining <= 5 ? "rgba(245,158,11,.15)" : "rgba(16,185,129,.15)",
+                            color: remaining <= 0 ? "#f87171" : remaining <= 5 ? "#fbbf24" : "#34d399",
+                            border: `1px solid ${remaining <= 0 ? "rgba(239,68,68,.3)" : remaining <= 5 ? "rgba(245,158,11,.3)" : "rgba(16,185,129,.3)"}` }}>
+                            {remaining <= 0 ? "🚫 Full" : `👥 ${remaining} / ${selCourse.studentLimit} spots left`}
+                          </span>
+                        );
+                      })()}
                     </div>
                   </div>
 

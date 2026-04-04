@@ -659,6 +659,278 @@ function PeopleTab({ course, user, allUsers, examSubmissions, enrollments }) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+//  STUDENTS TAB — enrolled students list with teacher-set course status
+//
+//  DB requirement (run once):
+//    ALTER TABLE student_course_assignments
+//      ADD COLUMN IF NOT EXISTS course_status TEXT DEFAULT 'Ongoing';
+//    ALTER TABLE student_section_enrollments
+//      ADD COLUMN IF NOT EXISTS course_status TEXT DEFAULT 'Ongoing';
+// ═══════════════════════════════════════════════════════════════════════════════
+const COURSE_STATUSES = ["Ongoing", "Finished", "INC", "Failed"];
+
+const STATUS_STYLE = {
+  Ongoing:  { color: "#34d399", bg: "rgba(16,185,129,.15)", border: "rgba(16,185,129,.35)", icon: "🟢" },
+  Finished: { color: "#60a5fa", bg: "rgba(59,130,246,.15)", border: "rgba(59,130,246,.35)",  icon: "✅" },
+  INC:      { color: "#fbbf24", bg: "rgba(245,158,11,.15)",  border: "rgba(245,158,11,.35)", icon: "⚠️" },
+  Failed:   { color: "#f87171", bg: "rgba(239,68,68,.15)",   border: "rgba(239,68,68,.35)",  icon: "❌" },
+};
+
+function StudentsTab({ course, enrollments, allUsers }) {
+  // Map: studentUuid → { status, source: "legacy" | "section", sectionIds }
+  const [statusMap,  setStatusMap]  = useState({});
+  const [saving,     setSaving]     = useState({});  // studentUuid → bool
+  const [loading,    setLoading]    = useState(true);
+  const [toast,      setToast]      = useState("");
+  const [search,     setSearch]     = useState("");
+  const [filterSt,   setFilterSt]   = useState("All");
+  const showToast = (m) => { setToast(m); setTimeout(() => setToast(""), 2500); };
+
+  // Resolve enrolled students for this course
+  const enrolled = enrollments.filter(e => e.courseId === course.id);
+  const students = enrolled.map(e => {
+    const u = allUsers.find(u => u.id === e.studentId || u._uuid === e.studentId);
+    return u ? { ...u } : null;
+  }).filter(Boolean);
+
+  // ── Load statuses from both enrollment tables ──────────────────────────────
+  useEffect(() => {
+    if (!course._uuid) return;
+    (async () => {
+      setLoading(true);
+      const studentUuids = students.map(s => s._uuid).filter(Boolean);
+      if (!studentUuids.length) { setLoading(false); return; }
+
+      const map = {};
+
+      // 1. Legacy: student_course_assignments
+      const { data: legacyRows } = await supabase
+        .from("student_course_assignments")
+        .select("student_id, course_status")
+        .eq("course_id", course._uuid)
+        .in("student_id", studentUuids);
+
+      (legacyRows || []).forEach(r => {
+        map[r.student_id] = { status: r.course_status || "Ongoing", source: "legacy" };
+      });
+
+      // 2. Section-based: student_section_enrollments
+      const { data: sections } = await supabase
+        .from("course_sections")
+        .select("section_id")
+        .eq("course_id", course._uuid);
+
+      const sectionIds = (sections || []).map(s => s.section_id);
+      if (sectionIds.length) {
+        const { data: sseRows } = await supabase
+          .from("student_section_enrollments")
+          .select("student_id, course_status, section_id")
+          .in("section_id", sectionIds)
+          .in("student_id", studentUuids);
+
+        (sseRows || []).forEach(r => {
+          // Section-based enrollment wins
+          map[r.student_id] = {
+            status:     r.course_status || "Ongoing",
+            source:     "section",
+            sectionIds: sectionIds,
+          };
+        });
+      }
+
+      // 3. Students not in either table default to "Ongoing"
+      studentUuids.forEach(uuid => {
+        if (!map[uuid]) map[uuid] = { status: "Ongoing", source: "legacy" };
+      });
+
+      setStatusMap(map);
+      setLoading(false);
+    })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [course._uuid]);
+
+  // ── Save a status change ───────────────────────────────────────────────────
+  const handleStatusChange = async (studentUuid, newStatus) => {
+    setSaving(p => ({ ...p, [studentUuid]: true }));
+    const entry = statusMap[studentUuid] || { source: "legacy" };
+
+    try {
+      if (entry.source === "section" && entry.sectionIds?.length) {
+        const { error } = await supabase
+          .from("student_section_enrollments")
+          .update({ course_status: newStatus })
+          .eq("student_id", studentUuid)
+          .in("section_id", entry.sectionIds);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase
+          .from("student_course_assignments")
+          .update({ course_status: newStatus })
+          .eq("student_id",  studentUuid)
+          .eq("course_id",   course._uuid);
+        if (error) throw error;
+      }
+      setStatusMap(p => ({ ...p, [studentUuid]: { ...p[studentUuid], status: newStatus } }));
+      showToast(`Status updated to "${newStatus}"`);
+    } catch (e) {
+      showToast("Error: " + e.message);
+    } finally {
+      setSaving(p => ({ ...p, [studentUuid]: false }));
+    }
+  };
+
+  // ── Derived counts ─────────────────────────────────────────────────────────
+  const counts = COURSE_STATUSES.reduce((acc, s) => {
+    acc[s] = students.filter(st => (statusMap[st._uuid]?.status || "Ongoing") === s).length;
+    return acc;
+  }, {});
+
+  // ── Filtered list ──────────────────────────────────────────────────────────
+  const visible = students.filter(st => {
+    const stStatus = statusMap[st._uuid]?.status || "Ongoing";
+    const matchSearch = !search ||
+      st.fullName?.toLowerCase().includes(search.toLowerCase()) ||
+      st.id?.toLowerCase().includes(search.toLowerCase());
+    const matchFilter = filterSt === "All" || stStatus === filterSt;
+    return matchSearch && matchFilter;
+  });
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14, padding: "20px 0" }}>
+
+      {/* ── Stat pills ── */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 10 }}>
+        {[["All", "👥", students.length, "#6366f1", "rgba(99,102,241,.15)", "rgba(99,102,241,.3)"],
+          ...COURSE_STATUSES.map(s => [s, STATUS_STYLE[s].icon, counts[s], STATUS_STYLE[s].color, STATUS_STYLE[s].bg, STATUS_STYLE[s].border])
+        ].map(([label, icon, count, color, bg, border]) => (
+          <button key={label}
+            onClick={() => setFilterSt(label)}
+            style={{ background: filterSt === label ? bg : C.bg2, border: `1px solid ${filterSt === label ? border : C.bdr}`, borderRadius: 10, padding: "12px 10px", cursor: "pointer", textAlign: "center", transition: "all .15s", fontFamily: "inherit" }}>
+            <div style={{ fontSize: 20, fontWeight: 900, color, lineHeight: 1 }}>{count}</div>
+            <div style={{ fontSize: 10, color: C.muted, marginTop: 4, fontWeight: 600 }}>{icon} {label}</div>
+          </button>
+        ))}
+      </div>
+
+      {/* ── Search bar ── */}
+      <div style={{ position: "relative" }}>
+        <span style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: C.muted, fontSize: 14 }}>🔍</span>
+        <input
+          value={search} onChange={e => setSearch(e.target.value)}
+          placeholder="Search students by name or ID…"
+          style={{ width: "100%", background: C.bg2, border: `1px solid ${C.bdr}`, borderRadius: 8, padding: "9px 12px 9px 36px", fontSize: 13, color: C.txt, fontFamily: "inherit", outline: "none", boxSizing: "border-box" }}
+          onFocus={e => e.target.style.borderColor = "#6366f1"}
+          onBlur={e  => e.target.style.borderColor = C.bdr}
+        />
+      </div>
+
+      {/* ── Toast ── */}
+      {toast && (
+        <div style={{ fontSize: 12, color: "#34d399", fontWeight: 700, background: "rgba(16,185,129,.12)", padding: "6px 14px", borderRadius: 6, alignSelf: "flex-start", border: "1px solid rgba(16,185,129,.25)" }}>
+          ✓ {toast}
+        </div>
+      )}
+
+      {/* ── Table ── */}
+      <div style={{ background: C.bg2, border: `1px solid ${C.bdr}`, borderRadius: 10, overflow: "hidden" }}>
+
+        {/* Table header */}
+        <div style={{ display: "grid", gridTemplateColumns: "44px 1fr 130px 200px", gap: 0, padding: "10px 16px", borderBottom: `1px solid ${C.bdr}`, background: C.bg }}>
+          {["#", "Student", "Student ID", "Course Status"].map(h => (
+            <div key={h} style={{ fontSize: 10, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: "0.06em" }}>{h}</div>
+          ))}
+        </div>
+
+        {/* Rows */}
+        {loading ? (
+          <div style={{ padding: "40px 20px", textAlign: "center", color: C.muted, fontSize: 13 }}>Loading students…</div>
+        ) : visible.length === 0 ? (
+          <div style={{ padding: "50px 20px", textAlign: "center", color: C.muted }}>
+            <div style={{ fontSize: 36, marginBottom: 10 }}>🎓</div>
+            <div style={{ fontWeight: 700, color: C.txt, marginBottom: 4 }}>No students found</div>
+            <div style={{ fontSize: 12 }}>Try adjusting your search or filter.</div>
+          </div>
+        ) : visible.map((student, idx) => {
+          const currentStatus = statusMap[student._uuid]?.status || "Ongoing";
+          const st = STATUS_STYLE[currentStatus] || STATUS_STYLE.Ongoing;
+          const isSaving = saving[student._uuid];
+
+          return (
+            <div key={student._uuid}
+              style={{ display: "grid", gridTemplateColumns: "44px 1fr 130px 200px", gap: 0, padding: "12px 16px", borderBottom: `1px solid ${C.bdr}`, alignItems: "center", background: idx % 2 === 0 ? "transparent" : "rgba(255,255,255,.015)", transition: "background .1s" }}
+              onMouseEnter={e => e.currentTarget.style.background = "rgba(99,102,241,.05)"}
+              onMouseLeave={e => e.currentTarget.style.background = idx % 2 === 0 ? "transparent" : "rgba(255,255,255,.015)"}>
+
+              {/* Row number */}
+              <div style={{ fontSize: 11, color: C.muted, fontWeight: 700 }}>{idx + 1}</div>
+
+              {/* Student name + avatar */}
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <div style={{ width: 32, height: 32, borderRadius: "50%", background: "rgba(99,102,241,.2)", color: "#a5b4fc", fontSize: 12, fontWeight: 900, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                  {student.fullName?.charAt(0) || "?"}
+                </div>
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: 13, color: C.txt }}>{student.fullName || "—"}</div>
+                  <div style={{ fontSize: 10, color: C.muted }}>{student.email || ""}</div>
+                </div>
+              </div>
+
+              {/* Student ID */}
+              <div style={{ fontSize: 12, fontWeight: 700, color: "#94a3b8", background: "rgba(148,163,184,.1)", padding: "3px 9px", borderRadius: 9999, display: "inline-block", width: "fit-content" }}>
+                {student.id}
+              </div>
+
+              {/* Status dropdown */}
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <div style={{ position: "relative", flex: 1 }}>
+                  <select
+                    value={currentStatus}
+                    disabled={isSaving}
+                    onChange={e => handleStatusChange(student._uuid, e.target.value)}
+                    style={{
+                      width: "100%", appearance: "none", WebkitAppearance: "none",
+                      background: st.bg, border: `1px solid ${st.border}`,
+                      borderRadius: 8, padding: "6px 32px 6px 10px",
+                      fontSize: 12, fontWeight: 700, color: st.color,
+                      cursor: isSaving ? "wait" : "pointer",
+                      fontFamily: "inherit", outline: "none",
+                      opacity: isSaving ? 0.6 : 1,
+                      transition: "all .15s",
+                    }}>
+                    {COURSE_STATUSES.map(s => (
+                      <option key={s} value={s} style={{ background: "#1e293b", color: "#e2e8f0" }}>{STATUS_STYLE[s].icon} {s}</option>
+                    ))}
+                  </select>
+                  <span style={{ position: "absolute", right: 9, top: "50%", transform: "translateY(-50%)", color: st.color, fontSize: 10, pointerEvents: "none" }}>▾</span>
+                </div>
+                {isSaving && (
+                  <div style={{ width: 14, height: 14, borderRadius: "50%", border: `2px solid ${st.color}`, borderTopColor: "transparent", animation: "spin 0.6s linear infinite", flexShrink: 0 }} />
+                )}
+              </div>
+            </div>
+          );
+        })}
+
+        {/* Footer count */}
+        {!loading && (
+          <div style={{ padding: "8px 16px", background: C.bg, borderTop: `1px solid ${C.bdr}`, fontSize: 11, color: C.muted, display: "flex", justifyContent: "space-between" }}>
+            <span>Showing {visible.length} of {students.length} student{students.length !== 1 ? "s" : ""}</span>
+            {filterSt !== "All" && (
+              <button onClick={() => setFilterSt("All")} style={{ background: "none", border: "none", color: "#6366f1", fontSize: 11, cursor: "pointer", fontWeight: 700, fontFamily: "inherit" }}>
+                Clear filter ×
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Spinner keyframe */}
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 //  COURSE ROOM — full screen with tab bar (Google Classroom layout)
 // ═══════════════════════════════════════════════════════════════════════════════
 const BANNER_COLORS = [
@@ -673,6 +945,7 @@ function CourseRoom({ course, user, mats, exams, enrollments, allUsers, examSubm
     { id:"stream",     label:"Dashboard"   },
     { id:"classwork",  label:"Classwork"   },
     { id:"attendance", label:"Attendance"  },
+    { id:"students",   label:"Students"    },
     { id:"people",     label:"Grade"       },
   ];
 
@@ -771,6 +1044,17 @@ function CourseRoom({ course, user, mats, exams, enrollments, allUsers, examSubm
             <TeacherAttendanceTab
               course={course} user={user}
               enrollments={enrollments} allUsers={allUsers}
+            />
+          </div>
+        )}
+
+        {/* Students — enrollment list + course status */}
+        {tab === "students" && (
+          <div style={{ maxWidth: 960, margin:"0 auto", padding:"0 24px" }}>
+            <StudentsTab
+              course={course}
+              enrollments={enrollments}
+              allUsers={allUsers}
             />
           </div>
         )}
