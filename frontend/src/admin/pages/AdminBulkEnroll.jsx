@@ -14,11 +14,11 @@
  *   Step 3  Preview matched students
  *   Step 4  Assign → inserts into student_section_assignments
  */
-import React, { useState, useEffect, useMemo, useCallback } from "react";
-import { supabase } from "../../supabaseClient";
-import { programApi } from "../../lib/api";
-import { Badge, Btn, Sel, FF } from "../../components/ui";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import TopBar from "../../components/TopBar";
+import { Badge, Btn, FF, Sel } from "../../components/ui";
+import { programApi } from "../../lib/api";
+import { supabase } from "../../supabaseClient";
 
 const YEAR_LEVELS = ["1st Year", "2nd Year", "3rd Year", "4th Year"];
 const SEMESTERS   = ["1st Semester", "2nd Semester", "Summer"];
@@ -91,7 +91,7 @@ export default function AdminBulkEnroll() {
     // 2. For each matched course, load active sections for the current SY
     const courseIds = maps.map(m => m.course_id);
     const { data: sectionRows } = await supabase
-      .from("v_course_sections")
+      .from("course_sections")
       .select("*")
       .in("course_id", courseIds)
       .eq("sy_id", activeSyId)

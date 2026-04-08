@@ -1,4 +1,3 @@
-import React from "react";
 
 // ─── Badge ────────────────────────────────────────────────────────────────────
 export const Badge = ({ children, color = "default" }) => {
@@ -66,8 +65,8 @@ export const Btn = ({ children, variant = "primary", size = "md", style: sx, ...
 };
 
 // ─── FF (Form Field) ──────────────────────────────────────────────────────────
-export const FF = ({ label, required, error, children }) => (
-  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+export const FF = ({ label, required, error, children, style }) => (
+  <div style={{ display: "flex", flexDirection: "column", gap: 4, ...style }}>
     <label style={{ fontSize: 11, fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.05em" }}>
       {label}{required && <span style={{ color: "#f87171" }}> *</span>}
     </label>

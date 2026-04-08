@@ -1,229 +1,362 @@
 /**
- * AdminCourseSections.jsx
- * FOLDER: src/admin/pages/AdminCourseSections.jsx
+ * AdminCourseSections
  *
- * Replaces AdminCourseOfferings.jsx
+ * Manages course sections and program mappings. Allows administrators to create
+ * class sections with specific capacities, schedules, and teacher assignments.
  *
- * Manages course SECTIONS — each section is one teacher + one schedule
- * for a course within a school year + term.
- * Multiple sections per course are fully supported (Section A, B, C…).
+ * @example
+ * <AdminCourseSections />
  */
-import React, { useState, useEffect, useCallback } from "react";
-import { supabase } from "../../supabaseClient";
-import { Badge, Btn, FF, Input, Sel, Toast } from "../../components/ui";
-import TopBar from "../../components/TopBar";
+import { useCallback, useEffect, useState } from 'react';
+import TopBar from '../../components/TopBar';
+import { Badge, Btn, FF, Input, Sel } from '../../components/ui';
+import { supabase } from '../../supabaseClient';
 
-const TERMS       = ["Prelim", "Midterm", "Semi-Final", "Finals"];
-const YEAR_LEVELS = ["1st Year", "2nd Year", "3rd Year", "4th Year", "5th Year"];
-const SEMESTERS   = ["1st Semester", "2nd Semester", "Summer"];
+interface SectionFormState {
+  // The selected course ID.
+  courseId: string;
 
-const TERM_COLOR = {
-  Prelim:        { bg: "rgba(99,102,241,.15)",  text: "#a5b4fc" },
-  Midterm:       { bg: "rgba(59,130,246,.15)",  text: "#60a5fa" },
-  "Semi-Final":  { bg: "rgba(245,158,11,.15)",  text: "#fbbf24" },
-  Finals:        { bg: "rgba(239,68,68,.15)",   text: "#f87171" },
-};
+  // The school year ID.
+  syId: string;
 
-const emptySection = {
-  courseId: "", syId: "", term: "Prelim",
-  sectionCode: "A", teacherName: "", schedule: "", room: "", maxStudents: 40,
-};
+  // The academic term (e.g., Prelim, Midterm).
+  term: string;
 
-const emptyMapping = {
-  courseId: "", programId: "", yearLevel: "", semester: "",
-};
+  // The section identifier (e.g., A, B, C).
+  sectionCode: string;
+
+  // The assigned teacher's name.
+  teacherName: string;
+
+  // The chronological schedule string.
+  schedule: string;
+
+  // The room assignment.
+  room: string;
+
+  // The maximum number of students allowed to enroll.
+  maxCapacity: number;
+}
+
+interface MappingFormState {
+  // The ID of the course being mapped.
+  courseId: string;
+
+  // The ID of the target program.
+  programId: string;
+
+  // The applicable year level.
+  yearLevel: string;
+
+  // The applicable semester.
+  semester: string;
+}
+
+const TERMS = ["Prelim", "Midterm", "Semi-Final", "Finals"]; // Academic terms.
+const YEAR_LEVELS = ["1st Year", "2nd Year", "3rd Year", "4th Year", "5th Year"]; // Year levels.
+const SEMESTERS = ["1st Semester", "2nd Semester", "Summer"]; // Semesters.
+
+const emptySection: SectionFormState = {
+  courseId: "",
+  syId: "",
+  term: "Prelim",
+  sectionCode: "A",
+  teacherName: "",
+  schedule: "",
+  room: "",
+  maxCapacity: 30,
+}; // Default section form state.
+
+const emptyMapping: MappingFormState = {
+  courseId: "",
+  programId: "",
+  yearLevel: "",
+  semester: "",
+}; // Default mapping form state.
 
 export default function AdminCourseSections() {
-  // ── Reference data ───────────────────────────────────────────────────────
-  const [schoolYears, setSchoolYears] = useState([]);
-  const [programs,    setPrograms]    = useState([]);
-  const [courses,     setCourses]     = useState([]);
+  const [schoolYears, setSchoolYears] = useState<any[]>([]); // School years list.
+  const [programs, setPrograms] = useState<any[]>([]); // Programs list.
+  const [courses, setCourses] = useState<any[]>([]); // Courses list.
+  const [sections, setSections] = useState<any[]>([]); // Sections list.
+  const [mappings, setMappings] = useState<any[]>([]); // Program mappings list.
+  const [filterSy, setFilterSy] = useState<string>(""); // School year filter.
+  const [filterTerm, setFilterTerm] = useState<string>(""); // Term filter.
+  const [filterCourse, setFilterCourse] = useState<string>(""); // Course filter.
+  const [mapFilter, setMapFilter] = useState({ courseId: "", programId: "" }); // Mapping filters.
+  const [sectionForm, setSectionForm] = useState<SectionFormState>(emptySection); // Section form data.
+  const [mappingForm, setMappingForm] = useState<MappingFormState>(emptyMapping); // Mapping form data.
+  const [activeTab, setActiveTab] = useState<"sections" | "mappings">("sections"); // Current active UI tab.
+  const [showSectionForm, setShowSectionForm] = useState<boolean>(false); // Section form visibility.
+  const [showMappingForm, setShowMappingForm] = useState<boolean>(false); // Mapping form visibility.
+  const [editingSection, setEditingSection] = useState<string | null>(null); // ID of section being edited.
+  const [loading, setLoading] = useState<boolean>(false); // Data loading state.
+  const [saving, setSaving] = useState<boolean>(false); // Form saving state.
+  const [toast, setToast] = useState({ msg: "", err: false }); // Toast notification state.
 
-  // ── Sections tab ─────────────────────────────────────────────────────────
-  const [sections,    setSections]   = useState([]);
-  const [filterSy,    setFilterSy]   = useState("");
-  const [filterTerm,  setFilterTerm] = useState("");
-  const [filterCourse,setFilterCourse] = useState("");
-  const [sectionForm, setSectionForm] = useState(emptySection);
-  const [showSectionForm, setShowSectionForm] = useState(false);
-  const [editingSection, setEditingSection] = useState(null); // section_id or null
-
-  // ── Program map tab ───────────────────────────────────────────────────────
-  const [activeTab,   setActiveTab]  = useState("sections"); // "sections" | "mappings"
-  const [mappings,    setMappings]   = useState([]);
-  const [mappingForm, setMappingForm] = useState(emptyMapping);
-  const [showMappingForm, setShowMappingForm] = useState(false);
-  const [mapFilter,   setMapFilter]  = useState({ courseId: "", programId: "" });
-
-  // ── UI state ──────────────────────────────────────────────────────────────
-  const [loading, setLoading] = useState(false);
-  const [saving,  setSaving]  = useState(false);
-  const [toast,   setToast]   = useState({ msg: "", err: false });
-
-  const showOk  = (m) => { setToast({ msg: m, err: false });  setTimeout(() => setToast({ msg: "", err: false }), 3500); };
-  const showErr = (m) => { setToast({ msg: m, err: true });   setTimeout(() => setToast({ msg: "", err: false }), 4500); };
-
-  // ── Load reference data ───────────────────────────────────────────────────
   useEffect(() => {
-    async function load() {
-      const [syRes, progRes, courseRes] = await Promise.all([
-        supabase.from("school_years").select("sy_id, label, is_active").order("created_at", { ascending: false }),
-        supabase.from("program").select("program_id, name, code").eq("is_deleted", false).eq("is_active", true).order("name"),
-        supabase.from("courses").select("course_id, course_code, course_name, units").eq("is_active", true).order("course_code"),
-      ]);
-      const sys = syRes.data || [];
-      setSchoolYears(sys);
-      setPrograms(progRes.data || []);
-      setCourses(courseRes.data || []);
-      const active = sys.find(s => s.is_active);
-      if (active) {
-        setFilterSy(active.sy_id);
-        setSectionForm(p => ({ ...p, syId: active.sy_id }));
-      }
-    }
-    load();
+    loadReferenceData();
   }, []);
 
-  // ── Load sections ─────────────────────────────────────────────────────────
+  useEffect(() => {
+    loadSections();
+  }, [filterSy, filterTerm, filterCourse]);
+
+  useEffect(() => {
+    if (activeTab === "mappings") {
+      loadMappings();
+    }
+  }, [mapFilter, activeTab]);
+
+  /**
+   * Loads initial reference data including school years, programs, and courses.
+   *
+   * @returns
+   */
+  async function loadReferenceData() {
+    const [syRes, progRes, courseRes] = await Promise.all([
+      supabase.from("school_years").select("sy_id, label, is_active").order("created_at", { ascending: false }),
+      supabase.from("program").select("program_id, name, code").eq("is_deleted", false).eq("is_active", true).order("name"),
+      supabase.from("courses").select("course_id, course_code, course_name, units").eq("is_active", true).order("course_code"),
+    ]);
+
+    const sys = syRes.data || [];
+    setSchoolYears(sys);
+    setPrograms(progRes.data || []);
+    setCourses(courseRes.data || []);
+
+    const active = sys.find((s) => s.is_active);
+    if (active) {
+      setFilterSy(active.sy_id);
+      setSectionForm((p) => ({ ...p, syId: active.sy_id }));
+    }
+  }
+
+  /**
+   * Loads sections based on current active filters.
+   *
+   * @returns
+   */
   const loadSections = useCallback(async () => {
     if (!filterSy) return;
     setLoading(true);
+
     let q = supabase
-      .from("v_course_sections")
+      .from("course_sections")
       .select("*")
       .eq("sy_id", filterSy)
       .eq("is_active", true);
-    if (filterTerm)   q = q.eq("term", filterTerm);
+
+    if (filterTerm) q = q.eq("term", filterTerm);
     if (filterCourse) q = q.eq("course_id", filterCourse);
+
     const { data, error } = await q.order("course_code").order("section_code");
     if (!error) setSections(data || []);
+    
     setLoading(false);
   }, [filterSy, filterTerm, filterCourse]);
 
-  useEffect(() => { loadSections(); }, [loadSections]);
-
-  // ── Load program mappings ─────────────────────────────────────────────────
+  /**
+   * Loads program mappings based on mapping filters.
+   *
+   * @returns
+   */
   const loadMappings = useCallback(async () => {
     let q = supabase
       .from("course_program_map")
       .select("id, course_id, program_id, year_level, semester, courses(course_code, course_name), program(name, code)");
-    if (mapFilter.courseId)  q = q.eq("course_id", mapFilter.courseId);
+
+    if (mapFilter.courseId) q = q.eq("course_id", mapFilter.courseId);
     if (mapFilter.programId) q = q.eq("program_id", mapFilter.programId);
+
     const { data, error } = await q.order("id", { ascending: false });
     if (!error) setMappings(data || []);
   }, [mapFilter]);
 
-  useEffect(() => { if (activeTab === "mappings") loadMappings(); }, [loadMappings, activeTab]);
-
-  // ── Section: next available section code ─────────────────────────────────
-  const nextSectionCode = (courseId, syId, term) => {
+  /**
+   * Determines the next sequential alphabetical section code.
+   *
+   * @param courseId The target course ID.
+   * @param syId The target school year ID.
+   * @param term The target academic term.
+   * @returns
+   */
+  function getNextSectionCode(courseId: string, syId: string, term: string): string {
     const existing = sections.filter(
-      s => s.course_id === courseId && s.sy_id === syId && s.term === term
+      (s) => s.course_id === courseId && String(s.sy_id) === syId && s.term === term
     );
-    const used = new Set(existing.map(s => s.section_code));
+    const used = new Set(existing.map((s) => s.section_code));
+
     for (const letter of "ABCDEFGHIJKLMNOPQRSTUVWXYZ") {
       if (!used.has(letter)) return letter;
     }
     return "";
-  };
+  }
 
-  // ── Section: save (create or update) ─────────────────────────────────────
-  const handleSaveSection = async () => {
-    const { courseId, syId, term, sectionCode, teacherName, schedule, room, maxStudents } = sectionForm;
+  /**
+   * Submits the section form to create or update a course section.
+   *
+   * @returns
+   */
+  async function handleSaveSection() {
+    const { courseId, syId, term, sectionCode, teacherName, schedule, room, maxCapacity } = sectionForm;
+
     if (!courseId || !syId || !term || !sectionCode) {
-      showErr("Course, School Year, Term and Section Code are required."); return;
+      showError("Course, School Year, Term, and Section Code are required.");
+      return;
     }
+
     setSaving(true);
+
     const payload = {
-      course_id:    courseId,
-      sy_id:        Number(syId),
+      course_id: courseId,
+      sy_id: Number(syId),
       term,
       section_code: sectionCode.toUpperCase(),
       teacher_name: teacherName || null,
-      schedule:     schedule || null,
-      room:         room || null,
-      max_students: Number(maxStudents) || 40,
+      schedule: schedule || null,
+      room: room || null,
+      max_capacity: Number(maxCapacity) || 30,
     };
 
     let error;
+
     if (editingSection) {
-      ({ error } = await supabase.from("course_sections").update(payload).eq("section_id", editingSection));
+      const result = await supabase.from("course_sections").update(payload).eq("section_id", editingSection);
+      error = result.error;
     } else {
-      ({ error } = await supabase.from("course_sections").insert(payload));
+      const result = await supabase.from("course_sections").insert(payload);
+      error = result.error;
     }
+
     setSaving(false);
-    if (error) { showErr(error.message); return; }
+
+    if (error) {
+      showError(error.message);
+      return;
+    }
 
     setSectionForm({ ...emptySection, syId: filterSy });
     setShowSectionForm(false);
     setEditingSection(null);
     await loadSections();
-    showOk(editingSection ? "Section updated." : "Section created.");
-  };
+    showSuccess(editingSection ? "Section updated." : "Section created.");
+  }
 
-  const handleEditSection = (s) => {
+  /**
+   * Populates the form to edit an existing section.
+   *
+   * @param s The section data object.
+   * @returns
+   */
+  function handleEditSection(s: any) {
     setSectionForm({
-      courseId:    s.course_id,
-      syId:        String(s.sy_id),
-      term:        s.term,
+      courseId: s.course_id,
+      syId: String(s.sy_id),
+      term: s.term,
       sectionCode: s.section_code,
       teacherName: s.teacher_name || "",
-      schedule:    s.schedule || "",
-      room:        s.room || "",
-      maxStudents: s.max_students,
+      schedule: s.schedule || "",
+      room: s.room || "",
+      maxCapacity: s.max_capacity || 30,
     });
     setEditingSection(s.section_id);
     setShowSectionForm(true);
     window.scrollTo({ top: 0, behavior: "smooth" });
-  };
+  }
 
-  const handleDeleteSection = async (sectionId) => {
+  /**
+   * Soft deletes a section by setting its active status to false.
+   *
+   * @param sectionId The UUID of the section to remove.
+   * @returns
+   */
+  async function handleDeleteSection(sectionId: string) {
     if (!confirm("Remove this section? Students currently enrolled will be unaffected but no new assignments can be made.")) return;
     await supabase.from("course_sections").update({ is_active: false }).eq("section_id", sectionId);
     await loadSections();
-    showOk("Section removed.");
-  };
+    showSuccess("Section removed.");
+  }
 
-  // ── Program mapping: save ─────────────────────────────────────────────────
-  const handleSaveMapping = async () => {
+  /**
+   * Submits the mapping form to link a course to a program.
+   *
+   * @returns
+   */
+  async function handleSaveMapping() {
     const { courseId, programId, yearLevel, semester } = mappingForm;
+
     if (!courseId || !programId || !yearLevel || !semester) {
-      showErr("All mapping fields are required."); return;
+      showError("All mapping fields are required.");
+      return;
     }
+
     setSaving(true);
+
     const { error } = await supabase.from("course_program_map").insert({
-      course_id:  courseId,
+      course_id: courseId,
       program_id: Number(programId),
       year_level: yearLevel,
       semester,
     });
+
     setSaving(false);
+
     if (error) {
-      showErr(error.code === "23505" ? "This mapping already exists." : error.message);
+      showError(error.code === "23505" ? "This mapping already exists." : error.message);
       return;
     }
+
     setMappingForm(emptyMapping);
     setShowMappingForm(false);
     await loadMappings();
-    showOk("Mapping added.");
-  };
+    showSuccess("Mapping added.");
+  }
 
-  const handleDeleteMapping = async (id) => {
+  /**
+   * Deletes a program mapping.
+   *
+   * @param id The mapping ID to delete.
+   * @returns
+   */
+  async function handleDeleteMapping(id: number) {
     if (!confirm("Remove this program mapping?")) return;
     await supabase.from("course_program_map").delete().eq("id", id);
     await loadMappings();
-    showOk("Mapping removed.");
-  };
+    showSuccess("Mapping removed.");
+  }
 
-  // ── Group sections by course for display ──────────────────────────────────
-  const sectionsByCourse = sections.reduce((acc, s) => {
+  /**
+   * Displays a temporary success toast notification.
+   *
+   * @param msg The message to display.
+   * @returns
+   */
+  function showSuccess(msg: string) {
+    setToast({ msg, err: false });
+    setTimeout(() => setToast({ msg: "", err: false }), 3500);
+  }
+
+  /**
+   * Displays a temporary error toast notification.
+   *
+   * @param msg The error message to display.
+   * @returns
+   */
+  function showError(msg: string) {
+    setToast({ msg, err: true });
+    setTimeout(() => setToast({ msg: "", err: false }), 4500);
+  }
+
+  const sectionsByCourse = sections.reduce((acc: any, s: any) => {
     const key = s.course_id;
-    if (!acc[key]) acc[key] = { course_code: s.course_code, course_name: s.course_name, units: s.units, sections: [] };
+    if (!acc[key]) {
+      acc[key] = { course_code: s.course_code, course_name: s.course_name, units: s.units, sections: [] };
+    }
     acc[key].sections.push(s);
     return acc;
-  }, {});
+  }, {}); // Groups flattened section views into hierarchical course lists.
 
-  // ─────────────────────────────────────────────────────────────────────────
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
       <TopBar title="Course Sections & Program Maps" icon="📅"
@@ -235,7 +368,6 @@ export default function AdminCourseSections() {
         }
       />
 
-      {/* Toast */}
       {toast.msg && (
         <div style={{ padding: "10px 20px 0" }}>
           <div style={{
@@ -249,15 +381,14 @@ export default function AdminCourseSections() {
         </div>
       )}
 
-      {/* ════════════════════════════════════════════════════════
-          TAB: SECTIONS
-      ════════════════════════════════════════════════════════ */}
       {activeTab === "sections" && (
         <>
-          {/* Add/Edit section form */}
           <div style={{ padding: "10px 20px 0", display: "flex", justifyContent: "flex-end" }}>
             <Btn onClick={() => {
-              if (showSectionForm && editingSection) { setEditingSection(null); setSectionForm({ ...emptySection, syId: filterSy }); }
+              if (showSectionForm && editingSection) { 
+                setEditingSection(null); 
+                setSectionForm({ ...emptySection, syId: filterSy }); 
+              }
               setShowSectionForm(v => !v);
             }}>
               {showSectionForm ? "Cancel" : "+ Add Section"}
@@ -273,7 +404,7 @@ export default function AdminCourseSections() {
                 <FF label="Course *" style={{ flex: "0 0 200px" }}>
                   <Sel value={sectionForm.courseId} onChange={e => {
                     const cid = e.target.value;
-                    const code = nextSectionCode(cid, sectionForm.syId, sectionForm.term);
+                    const code = getNextSectionCode(cid, sectionForm.syId, sectionForm.term);
                     setSectionForm(p => ({ ...p, courseId: cid, sectionCode: code }));
                   }}>
                     <option value="">Select course…</option>
@@ -293,7 +424,7 @@ export default function AdminCourseSections() {
                 <FF label="Term *" style={{ flex: "0 0 130px" }}>
                   <Sel value={sectionForm.term} onChange={e => {
                     const term = e.target.value;
-                    const code = nextSectionCode(sectionForm.courseId, sectionForm.syId, term);
+                    const code = getNextSectionCode(sectionForm.courseId, sectionForm.syId, term);
                     setSectionForm(p => ({ ...p, term, sectionCode: code }));
                   }}>
                     {TERMS.map(t => <option key={t} value={t}>{t}</option>)}
@@ -316,9 +447,9 @@ export default function AdminCourseSections() {
                   <Input value={sectionForm.room} placeholder="CB305"
                     onChange={e => setSectionForm(p => ({ ...p, room: e.target.value }))} />
                 </FF>
-                <FF label="Max Students" style={{ flex: "0 0 110px" }}>
-                  <Input type="number" min={1} value={sectionForm.maxStudents}
-                    onChange={e => setSectionForm(p => ({ ...p, maxStudents: e.target.value }))} />
+                <FF label="Max Capacity" style={{ flex: "0 0 110px" }}>
+                  <Input type="number" min={1} value={sectionForm.maxCapacity}
+                    onChange={e => setSectionForm(p => ({ ...p, maxCapacity: Number(e.target.value) }))} />
                 </FF>
                 <Btn onClick={handleSaveSection} disabled={saving} variant="success">
                   {saving ? "Saving…" : editingSection ? "Update" : "Add Section"}
@@ -327,7 +458,6 @@ export default function AdminCourseSections() {
             </div>
           )}
 
-          {/* Filters */}
           <div style={{ padding: "10px 20px", borderBottom: "1px solid #1e293b", display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
             <Sel value={filterSy} onChange={e => setFilterSy(e.target.value)} style={{ width: 180 }}>
               <option value="">All School Years</option>
@@ -346,7 +476,6 @@ export default function AdminCourseSections() {
             </div>
           </div>
 
-          {/* Sections grouped by course */}
           <div style={{ flex: 1, overflowY: "auto", padding: 20 }}>
             {loading && <div style={{ color: "#475569", textAlign: "center", marginTop: 40 }}>Loading…</div>}
             {!loading && Object.keys(sectionsByCourse).length === 0 && (
@@ -355,9 +484,8 @@ export default function AdminCourseSections() {
               </div>
             )}
 
-            {!loading && Object.entries(sectionsByCourse).map(([courseId, group]) => (
+            {!loading && Object.entries(sectionsByCourse).map(([courseId, group]: any) => (
               <div key={courseId} style={{ marginBottom: 24 }}>
-                {/* Course header */}
                 <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 10, paddingBottom: 6, borderBottom: "1px solid #1e293b" }}>
                   <span style={{ fontWeight: 800, fontSize: 14, color: "#f1f5f9" }}>{group.course_code}</span>
                   <span style={{ fontSize: 12, color: "#94a3b8" }}>{group.course_name}</span>
@@ -365,21 +493,21 @@ export default function AdminCourseSections() {
                   <Badge color="info">{group.sections.length} section{group.sections.length !== 1 ? "s" : ""}</Badge>
                 </div>
 
-                {/* Sections grid */}
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 10 }}>
-                  {group.sections.map(s => {
-                    const pct = Math.round((s.enrolled_count / s.max_students) * 100);
-                    const { bg, text: tcolor } = TERM_COLOR[s.term] || TERM_COLOR.Prelim;
-                    const isFull = s.enrolled_count >= s.max_students;
+                  {group.sections.map((s: any) => {
+                    const capacityValue = s.max_capacity || 30;
+                    const enrolledCount = s.enrolled_count || 0;
+                    const pct = Math.round((enrolledCount / capacityValue) * 100);
+                    const isFull = enrolledCount >= capacityValue;
+                    
                     return (
                       <div key={s.section_id} style={{ background: "#1e293b", border: "1px solid #334155", borderRadius: 10, padding: "12px 14px" }}>
-                        {/* Section header row */}
                         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
                           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                             <span style={{ background: "#0f172a", border: "1px solid #334155", borderRadius: 5, padding: "2px 8px", fontSize: 13, fontWeight: 800, color: "#f1f5f9" }}>
                               Section {s.section_code}
                             </span>
-                            <span style={{ background: bg, color: tcolor, padding: "1px 7px", borderRadius: 4, fontSize: 11, fontWeight: 700 }}>{s.term}</span>
+                            <span style={{ background: "rgba(99,102,241,.15)", color: "#a5b4fc", padding: "1px 7px", borderRadius: 4, fontSize: 11, fontWeight: 700 }}>{s.term}</span>
                           </div>
                           <div style={{ display: "flex", gap: 4 }}>
                             <button onClick={() => handleEditSection(s)}
@@ -391,20 +519,18 @@ export default function AdminCourseSections() {
                           </div>
                         </div>
 
-                        {/* Teacher & Schedule */}
                         <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 6 }}>
                           {s.teacher_name
                             ? <div>👤 {s.teacher_name}</div>
                             : <div style={{ color: "#475569", fontStyle: "italic" }}>No teacher assigned</div>}
                           {s.schedule && <div>🕐 {s.schedule}</div>}
-                          {s.room    && <div>📍 {s.room}</div>}
+                          {s.room && <div>📍 {s.room}</div>}
                         </div>
 
-                        {/* Enrollment bar */}
                         <div style={{ marginTop: 8 }}>
                           <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "#475569", marginBottom: 3 }}>
-                            <span>{s.enrolled_count} enrolled</span>
-                            <span style={{ color: isFull ? "#f87171" : "#475569" }}>Max {s.max_students}</span>
+                            <span>{enrolledCount} enrolled</span>
+                            <span style={{ color: isFull ? "#f87171" : "#475569" }}>Max {capacityValue}</span>
                           </div>
                           <div style={{ height: 4, background: "#0f172a", borderRadius: 2 }}>
                             <div style={{
@@ -424,11 +550,6 @@ export default function AdminCourseSections() {
         </>
       )}
 
-      {/* ════════════════════════════════════════════════════════
-          TAB: PROGRAM MAPS
-          Controls which course belongs to which program / year / semester.
-          NSTP can map to BSCS 1st Year 1st Sem AND BSBA 1st Year 1st Sem, etc.
-      ════════════════════════════════════════════════════════ */}
       {activeTab === "mappings" && (
         <>
           <div style={{ padding: "10px 20px 0", display: "flex", justifyContent: "flex-end" }}>
@@ -481,7 +602,6 @@ export default function AdminCourseSections() {
             </div>
           )}
 
-          {/* Mapping filters */}
           <div style={{ padding: "10px 20px", borderBottom: "1px solid #1e293b", display: "flex", gap: 12, alignItems: "center" }}>
             <Sel value={mapFilter.courseId} onChange={e => setMapFilter(p => ({ ...p, courseId: e.target.value }))} style={{ width: 220 }}>
               <option value="">All Courses</option>
@@ -494,7 +614,6 @@ export default function AdminCourseSections() {
             <div style={{ marginLeft: "auto", fontSize: 12, color: "#475569" }}>{mappings.length} mapping{mappings.length !== 1 ? "s" : ""}</div>
           </div>
 
-          {/* Mappings list */}
           <div style={{ flex: 1, overflowY: "auto", padding: 20 }}>
             {mappings.length === 0 && (
               <div style={{ color: "#475569", textAlign: "center", marginTop: 60, fontSize: 14 }}>
@@ -502,7 +621,7 @@ export default function AdminCourseSections() {
               </div>
             )}
             <div style={{ display: "flex", flexDirection: "column", gap: 8, maxWidth: 860 }}>
-              {mappings.map(m => (
+              {mappings.map((m: any) => (
                 <div key={m.id} style={{ background: "#1e293b", border: "1px solid #334155", borderRadius: 8, padding: "10px 14px", display: "flex", alignItems: "center", gap: 14 }}>
                   <div style={{ minWidth: 80, fontWeight: 800, fontSize: 13, color: "#f1f5f9" }}>
                     {m.courses?.course_code}
