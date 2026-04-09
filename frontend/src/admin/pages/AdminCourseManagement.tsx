@@ -33,8 +33,8 @@ const SCHEDULE_BLOCKS = [
 ];
 
 const CSV_TEMPLATES = {
-  courses: "Course Code,Course Name,Units,Prerequisite Codes (comma separated)\nCS101,Intro to Computing,3,\nCS102,Data Structures,3,CS101\nCS103,Algorithms,3,\"CS101, CS102\"",
-  sections: "Course Code,Section Label,Term,Room Name,Schedule Label,Max Capacity\nCS101,A,Prelim,Rm 201,MWF 7:30 AM - 8:30 AM,40",
+  courses: "Course Code,Course Name,Units,Lec Hours,Lab Hours,Prerequisite Codes (comma separated)\nCS101,Intro to Computing,3,2,1,\nCS102,Data Structures,3,2,1,CS101\nCS103,Algorithms,3,3,0,\"CS101, CS102\"",
+  sections: "Course Code,Section Label,Term,Room Name,Schedule Label,Max Capacity\nCS101,A,1st Semester,Rm 201,MWF 7:30 AM - 8:30 AM,40",
   mappings: "Course Code,Program Code,Year Level,Semester\nCS101,BSCS,1st Year,1st Semester",
   rooms: "Room Name,Capacity\nRm 201,40\nLab 1,30"
 };
@@ -56,6 +56,7 @@ export default function AdminCourseManagement({
   const [rooms, setRooms] = useState<any[]>([]);
   const [schoolYears, setSchoolYears] = useState<any[]>([]);
   const [studentsList, setStudentsList] = useState<any[]>([]);
+  const [globalPrereqs, setGlobalPrereqs] = useState<Record<string, string[]>>({});
 
   const [codeGroups, setCodeGroups] = useState<any[]>([]);
   const [courses, setCourses] = useState<any[]>([]);
@@ -70,7 +71,7 @@ export default function AdminCourseManagement({
   const [offerings, setOfferings] = useState<any[]>([]);
   const [offFilterCourse, setOffFilterCourse] = useState("");
   const [offFilterSy, setOffFilterSy] = useState("");
-  const [offFilterTerm, setOffFilterTerm] = useState("Prelim");
+  const [offFilterTerm, setOffFilterTerm] = useState("1st Semester");
   const [offPage, setOffPage] = useState(0);
   const offPageSize = 20;
 
@@ -106,13 +107,13 @@ export default function AdminCourseManagement({
   const [offSort, setOffSort] = useState<SortState>({ field: "created_at", dir: "desc" });
   const [mapSort, setMapSort] = useState<SortState>({ field: "id", dir: "desc" });
 
-  const [courseForm, setCourseForm] = useState<{code: string, name: string, units: number, prereqs: string[]}>({ code: "", name: "", units: 3, prereqs: [] });
+  const [courseForm, setCourseForm] = useState<{code: string, name: string, units: number, lec: number, lab: number, prereqs: string[]}>({ code: "", name: "", units: 3, lec: 3, lab: 0, prereqs: [] });
   const [mappingForm, setMappingForm] = useState({ courseId: "", programId: "", yearLevel: "1st Year", semester: "1st Semester" });
   const [newRoomForm, setNewRoomForm] = useState({ name: "", capacity: 40 });
-  const [sectionForm, setSectionForm] = useState({ courseId: "", maxCapacity: 30, roomId: "", scheduleLabel: "", sectionLabel: "A", syId: "", teacherId: "", term: "Prelim" });
+  const [sectionForm, setSectionForm] = useState({ courseId: "", maxCapacity: 30, roomId: "", scheduleLabel: "", sectionLabel: "A", syId: "", teacherId: "", term: "1st Semester", isUnlimited: false, yearLevel: "1st Year" });
   const [prereqFormCourseId, setPrereqFormCourseId] = useState("");
   const [prerequisites, setPrerequisites] = useState<any[]>([]);
-  const [rolloverForm, setRolloverForm] = useState({ sourceSyId: "", sourceTerm: "Prelim", targetSyId: "", targetTerm: "Midterm" });
+  const [rolloverForm, setRolloverForm] = useState({ sourceSyId: "", sourceTerm: "1st Semester", targetSyId: "", targetTerm: "2nd Semester" });
   const [auditMaterials, setAuditMaterials] = useState<any[]>([]);
   const [teacherWorkload, setTeacherWorkload] = useState<number | null>(null);
 
@@ -254,14 +255,24 @@ export default function AdminCourseManagement({
   }
 
   async function loadAllCourses() {
-    const { data: rawCourses, error } = await supabase.from("courses").select("course_id, course_code, course_name, units, is_active").order("course_code", { ascending: true });
+    const { data: rawCourses, error } = await supabase.from("courses").select("course_id, course_code, course_name, units, lec_hours, lab_hours, is_active").order("course_code", { ascending: true });
+    const { data: preData } = await supabase.from("course_prerequisites").select("course_id, courses!prereq_course_id(course_code)");
+    
     if (!error) {
       const normalized = (rawCourses || []).map((course) => ({
         _uuid: course.course_id, code: course.course_code, id: course.course_code,
         isActive: course.is_active, name: course.course_name, units: course.units,
+        lec_hours: course.lec_hours || 0, lab_hours: course.lab_hours || 0
       }));
       setAllCourses(normalized);
     }
+    
+    const pMap: Record<string, string[]> = {};
+    preData?.forEach((p: any) => {
+       if (!pMap[p.course_id]) pMap[p.course_id] = [];
+       if (p.courses?.course_code) pMap[p.course_id].push(p.courses.course_code);
+    });
+    setGlobalPrereqs(pMap);
   }
 
   async function loadCodesAPI() {
@@ -292,7 +303,7 @@ export default function AdminCourseManagement({
   async function loadCoursesAPI() {
     if (!selCode) return;
     setLoading(true);
-    let q = supabase.from("courses").select("course_id, course_code, course_name, units, is_active").ilike("course_code", `${selCode}%`);
+    let q = supabase.from("courses").select("course_id, course_code, course_name, units, lec_hours, lab_hours, is_active").ilike("course_code", `${selCode}%`);
     if (courseSearch) q = q.or(`course_name.ilike.%${courseSearch}%,course_code.ilike.%${courseSearch}%`);
     q = q.order(courseSort.field, { ascending: courseSort.dir === "asc" });
     
@@ -301,6 +312,7 @@ export default function AdminCourseManagement({
       const normalized = data.map((course) => ({
         _uuid: course.course_id, code: course.course_code, id: course.course_code,
         isActive: course.is_active, name: course.course_name, units: course.units,
+        lec_hours: course.lec_hours || 0, lab_hours: course.lab_hours || 0
       }));
       setCourses(normalized);
     }
@@ -374,7 +386,7 @@ export default function AdminCourseManagement({
 
   async function loadMappingsAPI() {
     setLoading(true);
-    let q = supabase.from("course_program_map").select("id, course_id, program_id, year_level, semester, effective_sy_id, courses!inner(course_code, course_name, units), program(name, code)");
+    let q = supabase.from("course_program_map").select("id, course_id, program_id, year_level, semester, effective_sy_id, courses!inner(course_code, course_name, units, lec_hours, lab_hours), program(name, code)");
     
     if (mapFilterCourse) q = q.eq("course_id", mapFilterCourse);
     if (mapFilterProg) q = q.eq("program_id", mapFilterProg);
@@ -386,9 +398,12 @@ export default function AdminCourseManagement({
     if (!error && data) {
       const formatted = data.map((m: any) => ({
         ...m,
+        course_id: m.course_id,
         course_code: m.courses?.course_code,
         course_name: m.courses?.course_name,
         units: m.courses?.units || 0,
+        lec_hours: m.courses?.lec_hours || 0,
+        lab_hours: m.courses?.lab_hours || 0,
         program_code: m.program?.code
       }));
       setMappings(formatted);
@@ -400,7 +415,7 @@ export default function AdminCourseManagement({
     setLoading(true);
     const { data, error } = await supabase
       .from("course_prerequisites")
-      .select("id, courses!prerequisite_course_id(course_code, course_name)")
+      .select("id, courses!prereq_course_id(course_code, course_name)")
       .eq("course_id", courseId);
     if (!error) setPrerequisites(data || []);
     setLoading(false);
@@ -481,7 +496,7 @@ export default function AdminCourseManagement({
 
   function downloadExportCSV(data: any[], filename: string) {
     if (data.length === 0) return;
-    const keys = Object.keys(data[0]).filter(k => k !== "_uuid" && k !== "id" && k !== "select");
+    const keys = Object.keys(data[0]).filter(k => k !== "_uuid" && k !== "id" && k !== "select" && k !== "section_id" && k !== "course_id");
     const headers = keys.join(",");
     const rows = data.map(row => keys.map(k => `"${String(row[k] ?? "").replace(/"/g, '""')}"`).join(",")).join("\n");
     const blob = new Blob([`${headers}\n${rows}`], { type: "text/csv" });
@@ -500,22 +515,24 @@ export default function AdminCourseManagement({
     const reader = new FileReader();
     reader.onload = async (event) => {
       const text = event.target?.result as string;
-      const rows = text.split("\n").map(r => r.split(","));
+      const csvRows = text.split("\n").map(r => r.split(","));
       
       try {
         if (importType === "courses") {
           const newCourses = [];
           const prereqMap: Record<string, string[]> = {};
           
-          for (let i = 1; i < rows.length; i++) {
-            if (rows[i].length >= 3 && rows[i][0].trim()) {
-              const code = rows[i][0].trim().toUpperCase();
+          for (let i = 1; i < csvRows.length; i++) {
+            if (csvRows[i].length >= 3 && csvRows[i][0].trim()) {
+              const code = csvRows[i][0].trim().toUpperCase();
               newCourses.push({
                 course_code: code,
-                course_name: rows[i][1].trim(),
-                units: Number(rows[i][2].trim()) || 3
+                course_name: csvRows[i][1].trim(),
+                units: Number(csvRows[i][2].trim()) || 3,
+                lec_hours: Number(csvRows[i][3]?.trim()) || 0,
+                lab_hours: Number(csvRows[i][4]?.trim()) || 0
               });
-              if (rows[i][3]) prereqMap[code] = rows[i][3].replace(/"/g, "").split(";").map(s => s.trim().toUpperCase());
+              if (csvRows[i][5]) prereqMap[code] = csvRows[i][5].replace(/"/g, "").split(";").map(s => s.trim().toUpperCase());
             }
           }
           if (newCourses.length > 0) {
@@ -531,7 +548,7 @@ export default function AdminCourseManagement({
               if (cid) {
                 for (const pcode of prereqMap[code]) {
                   const pid = courseDict[pcode];
-                  if (pid) prereqPayload.push({ course_id: cid, prerequisite_course_id: pid });
+                  if (pid) prereqPayload.push({ course_id: cid, prereq_course_id: pid });
                 }
               }
             }
@@ -543,9 +560,9 @@ export default function AdminCourseManagement({
         
         else if (importType === "rooms") {
           const newRooms = [];
-          for (let i = 1; i < rows.length; i++) {
-            if (rows[i].length >= 2 && rows[i][0].trim()) {
-              newRooms.push({ room_name: rows[i][0].trim(), capacity: Number(rows[i][1].trim()) || 40 });
+          for (let i = 1; i < csvRows.length; i++) {
+            if (csvRows[i].length >= 2 && csvRows[i][0].trim()) {
+              newRooms.push({ room_name: csvRows[i][0].trim(), capacity: Number(csvRows[i][1].trim()) || 40 });
             }
           }
           if (newRooms.length > 0) {
@@ -561,12 +578,12 @@ export default function AdminCourseManagement({
           const progDict = programs.reduce((acc, p) => { acc[p.code] = p.program_id; return acc; }, {});
           const newMaps = [];
           
-          for (let i = 1; i < rows.length; i++) {
-            if (rows[i].length >= 4 && rows[i][0].trim()) {
-              const cId = courseDict[rows[i][0].trim().toUpperCase()];
-              const pId = progDict[rows[i][1].trim().toUpperCase()];
+          for (let i = 1; i < csvRows.length; i++) {
+            if (csvRows[i].length >= 4 && csvRows[i][0].trim()) {
+              const cId = courseDict[csvRows[i][0].trim().toUpperCase()];
+              const pId = progDict[csvRows[i][1].trim().toUpperCase()];
               if (cId && pId) {
-                newMaps.push({ course_id: cId, program_id: pId, year_level: rows[i][2].trim(), semester: rows[i][3].trim(), effective_sy_id: offFilterSy || null });
+                newMaps.push({ course_id: cId, program_id: pId, year_level: csvRows[i][2].trim(), semester: csvRows[i][3].trim(), effective_sy_id: offFilterSy || null });
               }
             }
           }
@@ -584,20 +601,23 @@ export default function AdminCourseManagement({
           const newSections = [];
           let skipped = 0;
 
-          for (let i = 1; i < rows.length; i++) {
-            if (rows[i].length >= 6 && rows[i][0].trim()) {
-              const cId = courseDict[rows[i][0].trim().toUpperCase()];
-              const term = rows[i][2].trim();
-              const schedule = rows[i][4].trim();
-              const rId = roomDict[rows[i][3].trim()] || null;
+          for (let i = 1; i < csvRows.length; i++) {
+            if (csvRows[i].length >= 6 && csvRows[i][0].trim()) {
+              const cId = courseDict[csvRows[i][0].trim().toUpperCase()];
+              const term = csvRows[i][2].trim();
+              const schedule = csvRows[i][4].trim();
+              const rId = roomDict[csvRows[i][3].trim()] || null;
               
               if (cId && offFilterSy && term) {
                 const hasConflict = await checkScheduleConflict(offFilterSy, term, schedule, null, rId);
                 if (hasConflict) { skipped++; continue; }
                 
+                let capValue: number | null = Number(csvRows[i][5].trim());
+                if (isNaN(capValue) || csvRows[i][5].trim().toLowerCase() === "unlimited") capValue = null;
+
                 newSections.push({
-                  course_id: cId, section_label: rows[i][1].trim(), term, room_id: rId,
-                  schedule_label: schedule, max_capacity: Number(rows[i][5].trim()) || 30,
+                  course_id: cId, section_label: csvRows[i][1].trim(), term, room_id: rId,
+                  schedule_label: schedule, max_capacity: capValue,
                   sy_id: offFilterSy
                 });
               }
@@ -628,7 +648,9 @@ export default function AdminCourseManagement({
     const { data, error } = await supabase.from("courses").insert({ 
       course_code: courseForm.code.toUpperCase(), 
       course_name: courseForm.name, 
-      units: courseForm.units 
+      units: courseForm.units,
+      lec_hours: courseForm.lec,
+      lab_hours: courseForm.lab 
     }).select("course_id").single();
 
     if (error) { showToast(error.message, "error"); return; }
@@ -636,14 +658,14 @@ export default function AdminCourseManagement({
     if (courseForm.prereqs.length > 0 && data) {
       const prereqPayload = courseForm.prereqs.map(pId => ({
         course_id: data.course_id,
-        prerequisite_course_id: pId
+        prereq_course_id: pId
       }));
       await supabase.from("course_prerequisites").insert(prereqPayload);
     }
 
     showToast("Course created successfully.", "success");
     setShowCreateCourseModal(false);
-    setCourseForm({ code: "", name: "", units: 3, prereqs: [] });
+    setCourseForm({ code: "", name: "", units: 3, lec: 3, lab: 0, prereqs: [] });
     await loadAllCourses();
     if (selCode) void loadCoursesAPI();
   }
@@ -658,13 +680,14 @@ export default function AdminCourseManagement({
 
     const { error } = await supabase.from("course_sections").insert({
       course_id: sectionForm.courseId, 
-      max_capacity: sectionForm.maxCapacity,
+      max_capacity: sectionForm.isUnlimited ? null : sectionForm.maxCapacity,
       room_id: sectionForm.roomId || null, 
       schedule_label: sectionForm.scheduleLabel || null,
       section_label: sectionForm.sectionLabel, 
       sy_id: sectionForm.syId, 
       teacher_id: sectionForm.teacherId || null,
-      term: sectionForm.term
+      term: sectionForm.term,
+      year_level: sectionForm.yearLevel
     });
 
     if (error) { showToast(error.message, "error"); return; }
@@ -684,10 +707,11 @@ export default function AdminCourseManagement({
     if (hasConflict) return;
 
     const { error } = await supabase.from("course_sections").update({
-      max_capacity: sectionForm.maxCapacity,
+      max_capacity: sectionForm.isUnlimited ? null : sectionForm.maxCapacity,
       room_id: sectionForm.roomId || null,
       schedule_label: sectionForm.scheduleLabel || null,
-      teacher_id: sectionForm.teacherId || null
+      teacher_id: sectionForm.teacherId || null,
+      year_level: sectionForm.yearLevel
     }).eq("section_id", targetId);
 
     if (error) { showToast(error.message, "error"); return; }
@@ -701,11 +725,17 @@ export default function AdminCourseManagement({
 
   async function handleEditCourse() {
     if (!selCourse?._uuid) return;
-    const { error } = await supabase.from("courses").update({ course_code: courseForm.code.toUpperCase(), course_name: courseForm.name, units: courseForm.units }).eq("course_id", selCourse._uuid);
+    const { error } = await supabase.from("courses").update({ 
+      course_code: courseForm.code.toUpperCase(), 
+      course_name: courseForm.name, 
+      units: courseForm.units,
+      lec_hours: courseForm.lec,
+      lab_hours: courseForm.lab 
+    }).eq("course_id", selCourse._uuid);
     if (error) { showToast(error.message, "error"); return; }
     showToast("Course updated successfully.", "success");
     setShowEditCourseModal(false);
-    setSelCourse({ ...selCourse, code: courseForm.code.toUpperCase(), name: courseForm.name, units: courseForm.units });
+    setSelCourse({ ...selCourse, code: courseForm.code.toUpperCase(), name: courseForm.name, units: courseForm.units, lec_hours: courseForm.lec, lab_hours: courseForm.lab });
     await loadAllCourses();
     void loadCoursesAPI();
   }
@@ -749,12 +779,13 @@ export default function AdminCourseManagement({
     if (!selCourse || !prereqFormCourseId) return;
     const { error } = await supabase.from("course_prerequisites").insert({
       course_id: selCourse._uuid,
-      prerequisite_course_id: prereqFormCourseId
+      prereq_course_id: prereqFormCourseId
     });
     if (error) { showToast(error.message, "error"); return; }
     showToast("Prerequisite added.", "success");
     setPrereqFormCourseId("");
     void loadPrerequisites(selCourse._uuid);
+    void loadAllCourses(); 
   }
 
   async function handleRemovePrerequisite(id: string) {
@@ -762,6 +793,7 @@ export default function AdminCourseManagement({
     if (error) { showToast(error.message, "error"); return; }
     showToast("Prerequisite removed.", "success");
     void loadPrerequisites(selCourse._uuid);
+    void loadAllCourses();
   }
 
   async function handleRollover() {
@@ -890,12 +922,14 @@ export default function AdminCourseManagement({
     setSectionForm({
       ...sectionForm,
       courseId: mainTab === "catalog" && selCourse ? selCourse._uuid : offFilterCourse,
+      isUnlimited: false,
       maxCapacity: 30,
       roomId: "",
       scheduleLabel: "",
       syId: offFilterSy,
       teacherId: "",
-      term: offFilterTerm
+      term: offFilterTerm,
+      yearLevel: "1st Year"
     });
     setTeacherWorkload(null);
     setShowCreateSectionModal(true);
@@ -905,13 +939,15 @@ export default function AdminCourseManagement({
     if (!selSection) return;
     setSectionForm({
       courseId: selSection.course_id,
+      isUnlimited: selSection.max_capacity === null,
       maxCapacity: selSection.max_capacity || 30,
       roomId: selSection.room_id || "",
       scheduleLabel: selSection.schedule_label || "",
       sectionLabel: selSection.section_label,
       syId: selSection.sy_id,
       teacherId: selSection.teacher_id || "",
-      term: selSection.term
+      term: selSection.term,
+      yearLevel: selSection.year_level || "1st Year"
     });
     setTeacherWorkload(null);
     setShowEditSectionModal(true);
@@ -1025,7 +1061,7 @@ export default function AdminCourseManagement({
     { field: "section_label", header: "Section", width: 100, sortable: true },
     { field: "schedule_label", header: "Schedule", width: 180, sortable: true },
     { field: "room_name", header: "Room", width: 100 },
-    { field: "max_capacity", header: "Capacity", width: 100, sortable: true },
+    { cellRenderer: (_: any, row: any) => <span>{row.max_capacity === null ? "∞" : row.max_capacity}</span>, field: "max_capacity", header: "Capacity", width: 100, sortable: true },
   ];
 
   const offeringsCols = [
@@ -1036,7 +1072,7 @@ export default function AdminCourseManagement({
     { field: "term", header: "Term", width: 100, sortable: true },
     { field: "schedule_label", header: "Schedule", width: 180, sortable: false },
     { field: "room_name", header: "Room", width: 100, sortable: false },
-    { cellRenderer: (_: any, row: any) => <span>{row.enrolled_count} / {row.max_capacity || 30}</span>, field: "max_capacity", header: "Capacity", width: 100, sortable: true },
+    { cellRenderer: (_: any, row: any) => <span>{row.enrolled_count} / {row.max_capacity === null ? "∞" : (row.max_capacity || 30)}</span>, field: "max_capacity", header: "Capacity", width: 100, sortable: true },
     { cellRenderer: (_: any, row: any) => <Btn onClick={(e: any) => { e.stopPropagation(); openOfferingDetailsModal(row); }} size="sm" variant="secondary">View Details</Btn>, field: "section_id", header: "Action", sortable: false, width: 120 },
   ];
 
@@ -1076,21 +1112,28 @@ export default function AdminCourseManagement({
           .no-print { display: none !important; }
           body { background: white !important; color: black !important; }
           .print-area { display: block !important; padding: 20px; }
-          * { border-color: #ddd !important; }
+          .au-table { width: 100%; border-collapse: collapse; margin-bottom: 16px; font-size: 11px; }
+          .au-table th, .au-table td { border: 1px solid #000; padding: 4px; text-align: center; color: black; }
+          .au-table th { background: #eee !important; -webkit-print-color-adjust: exact; font-weight: bold; }
+          .au-table td:nth-child(2) { text-align: left; }
         }
+        .au-table { width: 100%; border-collapse: collapse; margin-bottom: 16px; font-size: 12px; color: #f1f5f9; }
+        .au-table th, .au-table td { border: 1px solid #334155; padding: 6px; text-align: center; }
+        .au-table th { background: #1e293b; color: #94a3b8; font-weight: bold; }
+        .au-table td:nth-child(2) { text-align: left; }
       `}</style>
       
       <div className="no-print">
-        <TopBar title="Course Management" subtitle="Unified Catalog, Offerings, Mappings, and Curriculum" />
+        <TopBar subtitle="Unified Catalog, Offerings, Mappings, and Curriculum" title="Course Management" />
 
-        <div style={{ display: "flex", gap: "8px", padding: "10px 16px", background: "#0f172a", borderBottom: "1px solid #334155" }}>
-          <Btn variant={mainTab === "catalog" ? "primary" : "ghost"} onClick={() => setMainTab("catalog")}>📚 Catalog</Btn>
-          <Btn variant={mainTab === "offerings" ? "primary" : "ghost"} onClick={() => { setMainTab("offerings"); setSelSectionsForDelete([]); }}>📅 Offerings</Btn>
-          <Btn variant={mainTab === "mappings" ? "primary" : "ghost"} onClick={() => { setMainTab("mappings"); setSelMappingsForDelete([]); }}>🔗 Program Mappings</Btn>
-          <Btn variant={mainTab === "curriculum" ? "primary" : "ghost"} onClick={() => setMainTab("curriculum")}>📜 Curriculum</Btn>
+        <div style={{ background: "#0f172a", borderBottom: "1px solid #334155", display: "flex", gap: "8px", padding: "10px 16px" }}>
+          <Btn onClick={() => setMainTab("catalog")} variant={mainTab === "catalog" ? "primary" : "ghost"}>📚 Catalog</Btn>
+          <Btn onClick={() => { setMainTab("offerings"); setSelSectionsForDelete([]); }} variant={mainTab === "offerings" ? "primary" : "ghost"}>📅 Offerings</Btn>
+          <Btn onClick={() => { setMainTab("mappings"); setSelMappingsForDelete([]); }} variant={mainTab === "mappings" ? "primary" : "ghost"}>🔗 Program Mappings</Btn>
+          <Btn onClick={() => setMainTab("curriculum")} variant={mainTab === "curriculum" ? "primary" : "ghost"}>📜 Curriculum</Btn>
         </div>
 
-        <div style={{ alignItems: "center", background: "#1e293b", borderBottom: "1px solid #334155", display: "flex", gap: "10px", padding: "10px 16px", flexWrap: "wrap" }}>
+        <div style={{ alignItems: "center", background: "#1e293b", borderBottom: "1px solid #334155", display: "flex", flexWrap: "wrap", gap: "10px", padding: "10px 16px" }}>
           
           {mainTab === "catalog" && (
             <>
@@ -1101,14 +1144,14 @@ export default function AdminCourseManagement({
           )}
 
           {(mainTab === "catalog" || mainTab === "offerings" || mainTab === "mappings") && (
-            <div style={{ display: "flex", alignItems: "center", background: "#0f172a", border: "1px solid #334155", borderRadius: "6px", overflow: "hidden" }}>
-              {mainTab === "catalog" && level === "codes" && <Input value={codeSearch} onChange={(e) => setCodeSearch(e.target.value)} onKeyDown={handleMainSearchKeyDown} placeholder="Search Code Prefix..." style={{ border: "none", background: "transparent", width: "180px", boxShadow: "none" }} />}
-              {mainTab === "catalog" && level === "course" && <Input value={courseSearch} onChange={(e) => setCourseSearch(e.target.value)} onKeyDown={handleMainSearchKeyDown} placeholder="Search Course Name..." style={{ border: "none", background: "transparent", width: "200px", boxShadow: "none" }} />}
-              {mainTab === "catalog" && level === "section" && <Input value={sectionSearch} onChange={(e) => setSectionSearch(e.target.value)} onKeyDown={handleMainSearchKeyDown} placeholder="Search Section Code..." style={{ border: "none", background: "transparent", width: "180px", boxShadow: "none" }} />}
-              {mainTab === "offerings" && <Input value={offeringSearch} onChange={(e) => setOfferingSearch(e.target.value)} onKeyDown={handleMainSearchKeyDown} placeholder="Search Course Code..." style={{ border: "none", background: "transparent", width: "200px", boxShadow: "none" }} />}
-              {mainTab === "mappings" && <Input value={mappingSearch} onChange={(e) => setMappingSearch(e.target.value)} onKeyDown={handleMainSearchKeyDown} placeholder="Search Course Name..." style={{ border: "none", background: "transparent", width: "200px", boxShadow: "none" }} />}
+            <div style={{ alignItems: "center", background: "#0f172a", border: "1px solid #334155", borderRadius: "6px", display: "flex", overflow: "hidden" }}>
+              {mainTab === "catalog" && level === "codes" && <Input onChange={(e) => setCodeSearch(e.target.value)} onKeyDown={handleMainSearchKeyDown} placeholder="Search Code Prefix..." style={{ background: "transparent", border: "none", boxShadow: "none", width: "180px" }} value={codeSearch} />}
+              {mainTab === "catalog" && level === "course" && <Input onChange={(e) => setCourseSearch(e.target.value)} onKeyDown={handleMainSearchKeyDown} placeholder="Search Course Name..." style={{ background: "transparent", border: "none", boxShadow: "none", width: "200px" }} value={courseSearch} />}
+              {mainTab === "catalog" && level === "section" && <Input onChange={(e) => setSectionSearch(e.target.value)} onKeyDown={handleMainSearchKeyDown} placeholder="Search Section Code..." style={{ background: "transparent", border: "none", boxShadow: "none", width: "180px" }} value={sectionSearch} />}
+              {mainTab === "offerings" && <Input onChange={(e) => setOfferingSearch(e.target.value)} onKeyDown={handleMainSearchKeyDown} placeholder="Search Course Code..." style={{ background: "transparent", border: "none", boxShadow: "none", width: "200px" }} value={offeringSearch} />}
+              {mainTab === "mappings" && <Input onChange={(e) => setMappingSearch(e.target.value)} onKeyDown={handleMainSearchKeyDown} placeholder="Search Course Name..." style={{ background: "transparent", border: "none", boxShadow: "none", width: "200px" }} value={mappingSearch} />}
 
-              <button onClick={() => setShowFilterModal(true)} style={{ background: "#1e293b", border: "none", borderLeft: "1px solid #334155", padding: "8px 12px", cursor: "pointer", color: "#94a3b8" }}>
+              <button onClick={() => setShowFilterModal(true)} style={{ background: "#1e293b", border: "none", borderLeft: "1px solid #334155", color: "#94a3b8", cursor: "pointer", padding: "8px 12px" }}>
                 ⚙️ Filters
               </button>
             </div>
@@ -1116,11 +1159,11 @@ export default function AdminCourseManagement({
 
           {mainTab === "curriculum" && (
             <>
-              <Sel value={selCurriculumProg} onChange={(e) => setSelCurriculumProg(e.target.value)} style={{ width: 200 }}>
+              <Sel onChange={(e) => setSelCurriculumProg(e.target.value)} style={{ width: 200 }} value={selCurriculumProg}>
                 <option value="">— Select Program —</option>
                 {programs.map(p => <option key={p.program_id} value={p.program_id}>{p.code} — {p.name}</option>)}
               </Sel>
-              <Sel value={selCurriculumSy} onChange={(e) => setSelCurriculumSy(e.target.value)} style={{ width: 160 }}>
+              <Sel onChange={(e) => setSelCurriculumSy(e.target.value)} style={{ width: 160 }} value={selCurriculumSy}>
                 <option value="">— Effective SY —</option>
                 {schoolYears.map(s => <option key={s.sy_id} value={s.sy_id}>{s.label}</option>)}
               </Sel>
@@ -1128,18 +1171,20 @@ export default function AdminCourseManagement({
             </>
           )}
 
-          <div style={{ alignItems: "center", display: "flex", gap: "8px", marginLeft: "auto", flexWrap: "wrap" }}>
-            <input type="file" accept=".csv" ref={fileInputRef} style={{ display: "none" }} onChange={handleCSVImport} />
+          <div style={{ alignItems: "center", display: "flex", flexWrap: "wrap", gap: "8px", marginLeft: "auto" }}>
+            <input accept=".csv" onChange={handleCSVImport} ref={fileInputRef} style={{ display: "none" }} type="file" />
 
             {mainTab === "offerings" && <Btn onClick={() => toggleTermLock()} size="sm" variant={isTermLocked ? "primary" : "secondary"}>{isTermLocked ? "Unlock Grades" : "Lock Grades"}</Btn>}
-            {mainTab === "offerings" && <Btn onClick={() => downloadCSVExport(offerings, "Offerings_Export.csv")} size="sm" variant="ghost">Export CSV</Btn>}
+            {mainTab === "offerings" && <Btn onClick={() => downloadCSVTemplate("sections")} size="sm" variant="ghost">Template</Btn>}
+            {mainTab === "offerings" && <Btn onClick={() => { setImportType("sections"); fileInputRef.current?.click(); }} size="sm" variant="secondary">Import Sections</Btn>}
+            {mainTab === "offerings" && <Btn onClick={() => downloadExportCSV(offerings, "Offerings_Export.csv")} size="sm" variant="ghost">Export CSV</Btn>}
             {mainTab === "offerings" && <Btn onClick={() => setShowRolloverModal(true)} size="sm" variant="secondary">Term Rollover</Btn>}
             
             <Btn onClick={() => setShowRoomModal(true)} size="sm" variant="ghost">Manage Rooms</Btn>
 
             {mainTab === "catalog" && level === "codes" && (
               <>
-                <Btn onClick={() => downloadCSVExport(allCourses, "Courses_Export.csv")} size="sm" variant="ghost">Export Courses</Btn>
+                <Btn onClick={() => downloadExportCSV(allCourses, "Courses_Export.csv")} size="sm" variant="ghost">Export CSV</Btn>
                 <Btn onClick={() => { setImportType("courses"); fileInputRef.current?.click(); }} size="sm" variant="secondary">Import Courses</Btn>
                 <Btn onClick={() => setShowCreateCodeModal(true)} size="sm">+ Create Code</Btn>
                 {selCodesForDelete.length > 0 && <Btn onClick={deleteSelectedCodes} size="sm" variant="danger">Delete Selected ({selCodesForDelete.length})</Btn>}
@@ -1148,18 +1193,18 @@ export default function AdminCourseManagement({
 
             {mainTab === "catalog" && level === "course" && (
               <>
-                <Btn onClick={() => downloadCSVExport(courses, "Courses_Filtered_Export.csv")} size="sm" variant="ghost">Export CSV</Btn>
-                <Btn onClick={() => { setCourseForm({ code: selCode ? `${selCode} ` : "", name: "", units: 3, prereqs: [] }); setShowCreateCourseModal(true); }} size="sm">+ Create Course</Btn>
+                <Btn onClick={() => downloadExportCSV(courses, "Courses_Filtered_Export.csv")} size="sm" variant="ghost">Export CSV</Btn>
+                <Btn onClick={() => { setCourseForm({ code: selCode ? `${selCode} ` : "", lab: 0, lec: 3, name: "", prereqs: [], units: 3 }); setShowCreateCourseModal(true); }} size="sm">+ Create Course</Btn>
                 {selCoursesForDelete.length > 0 && <Btn onClick={deleteSelectedCourses} size="sm" variant="danger">Delete Selected ({selCoursesForDelete.length})</Btn>}
               </>
             )}
 
             {mainTab === "catalog" && level === "section" && (
               <>
-                <Btn onClick={() => downloadCSVExport(sections, "Sections_Export.csv")} size="sm" variant="ghost">Export Sections</Btn>
+                <Btn onClick={() => downloadExportCSV(sections, "Sections_Export.csv")} size="sm" variant="ghost">Export CSV</Btn>
                 <Btn onClick={() => { setImportType("sections"); fileInputRef.current?.click(); }} size="sm" variant="secondary">Import Sections</Btn>
                 <Btn onClick={openPrereqModal} size="sm" variant="ghost">Manage Prerequisites</Btn>
-                <Btn onClick={() => { setCourseForm({ code: selCourse.code, name: selCourse.name, units: selCourse.units, prereqs: [] }); setShowEditCourseModal(true); }} size="sm" variant="ghost">Edit Course</Btn>
+                <Btn onClick={() => { setCourseForm({ code: selCourse.code, lab: selCourse.lab_hours || 0, lec: selCourse.lec_hours || 0, name: selCourse.name, prereqs: [], units: selCourse.units }); setShowEditCourseModal(true); }} size="sm" variant="ghost">Edit Course</Btn>
                 <Btn onClick={openCreateSectionModal} size="sm">+ Create Section</Btn>
                 {selSection && <Btn onClick={openAuditModal} size="sm" variant="ghost">Audit Materials</Btn>}
                 {selSection && <Btn onClick={openEditSectionModal} size="sm" variant="secondary">Edit Section Setup</Btn>}
@@ -1169,7 +1214,7 @@ export default function AdminCourseManagement({
 
             {mainTab === "mappings" && (
               <>
-                <Btn onClick={() => downloadCSVExport(mappings, "Mappings_Export.csv")} size="sm" variant="ghost">Export CSV</Btn>
+                <Btn onClick={() => downloadExportCSV(mappings, "Mappings_Export.csv")} size="sm" variant="ghost">Export CSV</Btn>
                 <Btn onClick={() => { setImportType("mappings"); fileInputRef.current?.click(); }} size="sm" variant="secondary">Import Mappings</Btn>
                 <Btn onClick={() => setShowMappingModal(true)} size="sm">+ Add Mapping</Btn>
                 {selMappingsForDelete.length > 0 && <Btn onClick={deleteSelectedMappings} size="sm" variant="danger">Delete Selected ({selMappingsForDelete.length})</Btn>}
@@ -1191,27 +1236,27 @@ export default function AdminCourseManagement({
         
         {mainTab === "catalog" && level === "codes" && (
           <div style={{ background: "#0f172a", flex: 1, padding: "20px" }}>
-            {loading ? <div style={{ color: "#475569", paddingTop: 40, textAlign: "center" }}>Loading...</div> : <LMSGrid columns={codeCols} height="100%" onRowClick={(row) => toggleSelection(row.prefix, selCodesForDelete, setSelCodesForDelete)} onSortChange={(f, d) => setCodeSort({ field: f, dir: d as "asc"|"desc" })} sortField={codeSort.field} sortDir={codeSort.dir} rowData={codeGroups} />}
+            {loading ? <div style={{ color: "#475569", paddingTop: 40, textAlign: "center" }}>Loading...</div> : <LMSGrid columns={codeCols} height="100%" onRowClick={(row) => drillCode(row.prefix)} onSortChange={(f, d) => setCodeSort({ field: f, dir: d as "asc"|"desc" })} rowData={codeGroups} sortDir={codeSort.dir} sortField={codeSort.field} />}
           </div>
         )}
 
         {mainTab === "catalog" && level === "course" && (
           <div style={{ background: "#0f172a", flex: 1, padding: "20px" }}>
-            <LMSGrid columns={courseCols} height="100%" onRowClick={(row) => toggleSelection(row._uuid, selCoursesForDelete, setSelCoursesForDelete)} onSortChange={(f, d) => setCourseSort({ field: f, dir: d as "asc"|"desc" })} sortField={courseSort.field} sortDir={courseSort.dir} rowData={courses} />
+            <LMSGrid columns={courseCols} height="100%" onRowClick={(row) => toggleSelection(row._uuid, selCoursesForDelete, setSelCoursesForDelete)} onSortChange={(f, d) => setCourseSort({ field: f, dir: d as "asc"|"desc" })} rowData={courses} sortDir={courseSort.dir} sortField={courseSort.field} />
           </div>
         )}
 
         {mainTab === "catalog" && level === "section" && (
           <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
             <div style={{ background: "#1e293b", borderRight: "1px solid #334155", display: "flex", flexDirection: "column", padding: "16px", width: "350px" }}>
-              <div style={{ color: "#f1f5f9", fontSize: "14px", fontWeight: 800, marginBottom: "16px" }}>Enrollment Panel</div>
+              <div style={{ color: "#f1f5f9", fontSize: "14px", fontWeight: 800, marginBottom: "16px" }}>Global Enrollment Panel</div>
               <Input onChange={(e) => setStudentSearch(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void loadStudentsAPI(studentSearch); }} placeholder="Search student + Enter" style={{ marginBottom: "12px" }} value={studentSearch} />
               
               <div style={{ alignItems: "center", borderBottom: "1px solid #334155", display: "flex", gap: "8px", marginBottom: "8px", paddingBottom: "8px" }}>
                 <input checked={studentsList.length > 0 && selStudents.length === studentsList.length} onChange={(e) => setSelStudents(e.target.checked ? studentsList.map(s=>String(s._uuid)) : [])} type="checkbox" />
-                <span style={{ color: "#94a3b8", fontSize: "12px", fontWeight: 700 }}>Select All Eligible</span>
+                <span style={{ color: "#94a3b8", fontSize: "12px", fontWeight: 700 }}>Select All Results</span>
                 
-                <label style={{ alignItems: "center", color: "#f87171", display: "flex", fontSize: "11px", gap: "4px", marginLeft: "auto", fontWeight: 700, cursor: "pointer" }}>
+                <label style={{ alignItems: "center", color: "#f87171", cursor: "pointer", display: "flex", fontSize: "11px", fontWeight: 700, gap: "4px", marginLeft: "auto" }}>
                   <input checked={forceEnroll} onChange={(e) => setForceEnroll(e.target.checked)} type="checkbox" /> Force Enroll
                 </label>
               </div>
@@ -1223,25 +1268,26 @@ export default function AdminCourseManagement({
                     {s.fullName}
                   </label>
                 ))}
+                {studentsList.length === 0 && <div style={{ color: "#64748b", fontSize: "12px", marginTop: "10px", textAlign: "center" }}>Search to find specific students...</div>}
               </div>
-              <Btn disabled={isLoading || selStudents.length === 0 || !selSection} onClick={enrollStudents}>{isLoading ? "Processing..." : `Enroll ${selStudents.length} Students`}</Btn>
+              <Btn disabled={isLoading || selStudents.length === 0 || !selSection} onClick={enrollStudents}>{isLoading ? "Processing..." : `Enroll ${selStudents.length} Selected`}</Btn>
             </div>
 
             <div style={{ background: "#0f172a", display: "flex", flex: 1, flexDirection: "column" }}>
               <div style={{ borderBottom: "1px solid #334155", flex: "0 0 40%", padding: "16px" }}>
-                <LMSGrid columns={sectionCols} height="100%" onRowClick={(row) => { setSelSection(row); setSelStudents([]); setEnrolledSearch(""); setEnrolledFilter(""); toggleSelection(row.section_id, selSectionsForDelete, setSelSectionsForDelete); }} onSortChange={(f, d) => setSectionSort({ field: f, dir: d as "asc"|"desc" })} sortField={sectionSort.field} sortDir={sectionSort.dir} rowData={sections} selectedId={selSection?.section_id} />
+                <LMSGrid columns={sectionCols} height="100%" onRowClick={(row) => { setSelSection(row); setSelStudents([]); setEnrolledSearch(""); setEnrolledFilter(""); toggleSelection(row.section_id, selSectionsForDelete, setSelSectionsForDelete); }} onSortChange={(f, d) => setSectionSort({ field: f, dir: d as "asc"|"desc" })} rowData={sections} selectedId={selSection?.section_id} sortDir={sectionSort.dir} sortField={sectionSort.field} />
               </div>
-              <div style={{ background: "#0a0f1a", flex: 1, padding: "16px", display: "flex", flexDirection: "column" }}>
+              <div style={{ background: "#0a0f1a", display: "flex", flex: 1, flexDirection: "column", padding: "16px" }}>
                 {selSection ? (
                   <>
                     <div style={{ display: "flex", gap: "10px", marginBottom: "12px" }}>
-                      <Input value={enrolledSearch} onChange={(e) => setEnrolledSearch(e.target.value)} placeholder="Search enrolled student..." style={{ width: 200 }} />
-                      <Sel value={enrolledFilter} onChange={(e) => setEnrolledFilter(e.target.value)} style={{ width: 150 }}>
+                      <Input onChange={(e) => setEnrolledSearch(e.target.value)} placeholder="Search enrolled student..." style={{ width: 200 }} value={enrolledSearch} />
+                      <Sel onChange={(e) => setEnrolledFilter(e.target.value)} style={{ width: 150 }} value={enrolledFilter}>
                         <option value="">All Statuses</option>
                         <option value="Enrolled">Enrolled</option>
                         <option value="Waitlisted">Waitlisted</option>
                       </Sel>
-                      <Btn onClick={() => downloadCSVExport(catalogEnrolledRows, `Roster_${selSection.section_label}.csv`)} size="sm" variant="ghost" style={{ marginLeft: "auto" }}>Export CSV</Btn>
+                      <Btn onClick={() => downloadExportCSV(catalogEnrolledRows, `Roster_${selSection.section_label}.csv`)} size="sm" style={{ marginLeft: "auto" }} variant="ghost">Export CSV</Btn>
                     </div>
                     <div style={{ flex: 1, overflow: "hidden" }}>
                       <LMSGrid columns={enrolledCols} height="100%" rowData={catalogEnrolledRows} />
@@ -1254,79 +1300,136 @@ export default function AdminCourseManagement({
         )}
 
         {mainTab === "offerings" && (
-           <div style={{ display: "flex", flexDirection: "column", flex: 1, background: "#0f172a", padding: "20px" }}>
+           <div style={{ background: "#0f172a", display: "flex", flexDirection: "column", flex: 1, padding: "20px" }}>
               <div style={{ flex: 1, overflow: "hidden" }}>
-                 {loading ? <div style={{ color: "#475569", paddingTop: 40, textAlign: "center" }}>Loading...</div> : <LMSGrid columns={offeringsCols} height="100%" onRowClick={(row) => toggleSelection(row.section_id, selSectionsForDelete, setSelSectionsForDelete)} onSortChange={(f, d) => setOffSort({ field: f, dir: d as "asc"|"desc" })} sortField={offSort.field} sortDir={offSort.dir} rowData={offerings} />}
+                 {loading ? <div style={{ color: "#475569", paddingTop: 40, textAlign: "center" }}>Loading...</div> : <LMSGrid columns={offeringsCols} height="100%" onRowClick={(row) => toggleSelection(row.section_id, selSectionsForDelete, setSelSectionsForDelete)} onSortChange={(f, d) => setOffSort({ field: f, dir: d as "asc"|"desc" })} rowData={offerings} sortDir={offSort.dir} sortField={offSort.field} />}
               </div>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", paddingTop: "12px", borderTop: "1px solid #1e293b", marginTop: "12px" }}>
+              <div style={{ alignItems: "center", borderTop: "1px solid #1e293b", display: "flex", justifyContent: "space-between", marginTop: "12px", paddingTop: "12px" }}>
                  <div style={{ color: "#64748b", fontSize: "12px" }}>Showing {offPage * offPageSize + 1} to {Math.min((offPage + 1) * offPageSize, offeringCount)} of {offeringCount} sections</div>
                  <div style={{ display: "flex", gap: "8px" }}>
-                    <Btn variant="secondary" size="sm" disabled={offPage === 0} onClick={() => setOffPage(p => p - 1)}>← Previous</Btn>
-                    <Btn variant="secondary" size="sm" disabled={(offPage + 1) * offPageSize >= offeringCount} onClick={() => setOffPage(p => p + 1)}>Next →</Btn>
+                    <Btn disabled={offPage === 0} onClick={() => setOffPage(p => p - 1)} size="sm" variant="secondary">← Previous</Btn>
+                    <Btn disabled={(offPage + 1) * offPageSize >= offeringCount} onClick={() => setOffPage(p => p + 1)} size="sm" variant="secondary">Next →</Btn>
                  </div>
               </div>
            </div>
         )}
 
         {mainTab === "mappings" && (
-           <div style={{ flex: 1, overflow: "hidden", padding: "20px", background: "#0f172a" }}>
-             {loading ? <div style={{ color: "#475569", paddingTop: 40, textAlign: "center" }}>Loading...</div> : <LMSGrid columns={mappingsCols} height="100%" onRowClick={(row) => toggleSelection(row.id, selMappingsForDelete, setSelMappingsForDelete)} onSortChange={(f, d) => setMapSort({ field: f, dir: d as "asc"|"desc" })} sortField={mapSort.field} sortDir={mapSort.dir} rowData={mappings} />}
+           <div style={{ background: "#0f172a", flex: 1, overflow: "hidden", padding: "20px" }}>
+             {loading ? <div style={{ color: "#475569", paddingTop: 40, textAlign: "center" }}>Loading...</div> : <LMSGrid columns={mappingsCols} height="100%" onRowClick={(row) => toggleSelection(row.id, selMappingsForDelete, setSelMappingsForDelete)} onSortChange={(f, d) => setMapSort({ field: f, dir: d as "asc"|"desc" })} rowData={mappings} sortDir={mapSort.dir} sortField={mapSort.field} />}
            </div>
         )}
       </div>
 
-      <div className={mainTab === "curriculum" ? "print-area" : "no-print"} style={{ display: mainTab === "curriculum" ? "block" : "none", flex: 1, overflowY: "auto", padding: "20px", background: "#0f172a" }}>
+      <div className={mainTab === "curriculum" ? "print-area" : "no-print"} style={{ background: "#0f172a", display: mainTab === "curriculum" ? "block" : "none", flex: 1, overflowY: "auto", padding: "20px" }}>
         {!selCurriculumProg ? (
-          <div style={{ color: "#475569", textAlign: "center", marginTop: 60, fontSize: 14 }}>Select a program above to view its curriculum.</div>
+          <div style={{ color: "#475569", fontSize: 14, marginTop: 60, textAlign: "center" }}>Select a program above to view its curriculum.</div>
         ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: "24px", maxWidth: 1000, margin: "0 auto" }}>
-            <div style={{ textAlign: "center", marginBottom: "20px" }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: "24px", margin: "0 auto", maxWidth: 1000 }}>
+            <div style={{ marginBottom: "20px", textAlign: "center" }}>
               <h2 style={{ color: "#f1f5f9", margin: "0 0 8px 0" }}>{programs.find(p => p.program_id === Number(selCurriculumProg))?.name}</h2>
               <div style={{ color: "#94a3b8", fontSize: "14px" }}>Effective School Year: {schoolYears.find(s => s.sy_id === selCurriculumSy)?.label || "All Mappings"}</div>
             </div>
             
             {YEAR_LEVELS.map(year => {
               if (!groupedCurriculum[year]) return null;
-              let yearTotalUnits = 0;
               
+              const s1 = groupedCurriculum[year]["1st Semester"] || [];
+              const s2 = groupedCurriculum[year]["2nd Semester"] || [];
+              const summer = groupedCurriculum[year]["Summer"] || [];
+
+              const s1Units = s1.reduce((acc: number, m: any) => acc + (m.units || 0), 0);
+              const s2Units = s2.reduce((acc: number, m: any) => acc + (m.units || 0), 0);
+              const sumUnits = summer.reduce((acc: number, m: any) => acc + (m.units || 0), 0);
+
               return (
-                <div key={year} style={{ background: "#1e293b", borderRadius: "8px", border: "1px solid #334155", overflow: "hidden" }}>
-                  <div style={{ background: "rgba(99,102,241,.1)", color: "#a5b4fc", padding: "10px 16px", fontWeight: 800, fontSize: "14px", borderBottom: "1px solid #334155", display: "flex", justifyContent: "space-between" }}>
-                    <span>{year}</span>
+                <div key={year} style={{ borderBottom: "2px dashed #475569", paddingBottom: "24px" }}>
+                  <div style={{ color: "#a5b4fc", fontSize: "16px", fontWeight: 800, marginBottom: "12px", textAlign: "center", textTransform: "uppercase" }}>{year}</div>
+                  
+                  <div style={{ display: "flex", gap: "20px" }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ color: "#f1f5f9", fontSize: "13px", fontWeight: 700, marginBottom: "8px", textAlign: "center" }}>1ST SEMESTER</div>
+                      <table className="au-table">
+                        <thead>
+                          <tr><th>Code</th><th>Description</th><th>Lec</th><th>Lab</th><th>Pre-req.</th></tr>
+                        </thead>
+                        <tbody>
+                          {s1.map((m: any) => (
+                            <tr key={m.id}>
+                              <td>{m.course_code}</td>
+                              <td>{m.course_name}</td>
+                              <td>{m.lec_hours || 0}</td>
+                              <td>{m.lab_hours || 0}</td>
+                              <td>{(globalPrereqs[m.course_id] || []).join(", ") || "None"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                        <tfoot>
+                          <tr>
+                            <td colSpan={4} style={{ fontWeight: "bold", textAlign: "right" }}>Total Units</td>
+                            <td style={{ fontWeight: "bold" }}>{s1Units}</td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                    </div>
+
+                    <div style={{ flex: 1 }}>
+                      <div style={{ color: "#f1f5f9", fontSize: "13px", fontWeight: 700, marginBottom: "8px", textAlign: "center" }}>2ND SEMESTER</div>
+                      <table className="au-table">
+                        <thead>
+                          <tr><th>Code</th><th>Description</th><th>Lec</th><th>Lab</th><th>Pre-req.</th></tr>
+                        </thead>
+                        <tbody>
+                          {s2.map((m: any) => (
+                            <tr key={m.id}>
+                              <td>{m.course_code}</td>
+                              <td>{m.course_name}</td>
+                              <td>{m.lec_hours || 0}</td>
+                              <td>{m.lab_hours || 0}</td>
+                              <td>{(globalPrereqs[m.course_id] || []).join(", ") || "None"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                        <tfoot>
+                          <tr>
+                            <td colSpan={4} style={{ fontWeight: "bold", textAlign: "right" }}>Total Units</td>
+                            <td style={{ fontWeight: "bold" }}>{s2Units}</td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                    </div>
                   </div>
-                  <div style={{ padding: "16px", display: "flex", flexDirection: "column", gap: "16px" }}>
-                    {SEMESTERS.map(sem => {
-                      if (!groupedCurriculum[year][sem] || groupedCurriculum[year][sem].length === 0) return null;
-                      
-                      const semUnits = groupedCurriculum[year][sem].reduce((acc: number, m: any) => acc + (m.units || 0), 0);
-                      yearTotalUnits += semUnits;
-                      
-                      return (
-                        <div key={sem}>
-                          <div style={{ display: "flex", justifyContent: "space-between", color: "#f1f5f9", fontSize: "13px", fontWeight: 700, marginBottom: "8px", borderBottom: "1px solid #334155", paddingBottom: "4px" }}>
-                            <span>{sem}</span>
-                            <span style={{ color: "#94a3b8" }}>{semUnits} Total Units</span>
-                          </div>
-                          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: "10px" }}>
-                            {groupedCurriculum[year][sem].map((m: any) => (
-                              <div key={m.id} style={{ background: "#0f172a", border: "1px solid #334155", borderRadius: "6px", padding: "10px" }}>
-                                <div style={{ fontWeight: 800, color: "#f1f5f9", fontSize: "13px" }}>{m.course_code}</div>
-                                <div style={{ color: "#94a3b8", fontSize: "12px", marginBottom: "4px" }}>{m.course_name}</div>
-                                <div style={{ color: "#475569", fontSize: "11px" }}>{m.units} Units</div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )
-                    })}
-                  </div>
-                  <div style={{ background: "#0f172a", padding: "10px 16px", borderTop: "1px solid #334155", textAlign: "right", color: "#a5b4fc", fontWeight: 700, fontSize: "13px" }}>
-                    Year Total: {yearTotalUnits} Units
-                  </div>
+
+                  {summer.length > 0 && (
+                    <div style={{ margin: "20px auto 0", maxWidth: "50%" }}>
+                      <div style={{ color: "#f1f5f9", fontSize: "13px", fontWeight: 700, marginBottom: "8px", textAlign: "center" }}>SUMMER</div>
+                      <table className="au-table">
+                        <thead>
+                          <tr><th>Code</th><th>Lec</th><th>Lab</th><th>Pre-req.</th></tr>
+                        </thead>
+                        <tbody>
+                          {summer.map((m: any) => (
+                            <tr key={m.id}>
+                              <td>{m.course_code}</td>
+                              <td>{m.lec_hours || 0}</td>
+                              <td>{m.lab_hours || 0}</td>
+                              <td>{(globalPrereqs[m.course_id] || []).join(", ") || "None"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                        <tfoot>
+                          <tr>
+                            <td colSpan={3} style={{ fontWeight: "bold", textAlign: "right" }}>Total Units</td>
+                            <td style={{ fontWeight: "bold" }}>{sumUnits}</td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                    </div>
+                  )}
                 </div>
               );
             })}
-            <div style={{ background: "#1e293b", padding: "16px", borderRadius: "8px", border: "1px solid #334155", textAlign: "right", color: "#f1f5f9", fontSize: "16px", fontWeight: 800 }}>
+            <div style={{ background: "#1e293b", border: "1px solid #334155", borderRadius: "8px", color: "#f1f5f9", fontSize: "16px", fontWeight: 800, padding: "16px", textAlign: "right" }}>
               Curriculum Grand Total: {
                 Object.values(groupedCurriculum).reduce((accYear: number, year: any) => 
                   accYear + Object.values(year).reduce((accSem: number, sem: any) => 
@@ -1347,17 +1450,17 @@ export default function AdminCourseManagement({
               
               {(mainTab === "offerings" || (mainTab === "catalog" && level === "section")) && (
                 <>
-                  <FF label="School Year"><Sel value={offFilterSy} onChange={(e) => setOffFilterSy(e.target.value)} style={{ width: "100%", marginBottom: "12px" }}>
+                  <FF label="School Year"><Sel onChange={(e) => setOffFilterSy(e.target.value)} style={{ marginBottom: "12px", width: "100%" }} value={offFilterSy}>
                     {schoolYears.map(s => <option key={s.sy_id} value={s.sy_id}>{s.label}{s.is_active ? " ★ Active" : ""}{s.is_locked ? " 🔒" : ""}</option>)}
                   </Sel></FF>
-                  <FF label="Term"><Sel value={offFilterTerm} onChange={(e) => setOffFilterTerm(e.target.value)} style={{ width: "100%", marginBottom: "12px" }}>
+                  <FF label="Term"><Sel onChange={(e) => setOffFilterTerm(e.target.value)} style={{ marginBottom: "12px", width: "100%" }} value={offFilterTerm}>
                     {TERMS.map(t => <option key={t} value={t}>{t}</option>)}
                   </Sel></FF>
                 </>
               )}
 
               {mainTab === "offerings" && (
-                <FF label="Course"><Sel value={offFilterCourse} onChange={(e) => setOffFilterCourse(e.target.value)} style={{ width: "100%", marginBottom: "12px" }}>
+                <FF label="Course"><Sel onChange={(e) => setOffFilterCourse(e.target.value)} style={{ marginBottom: "12px", width: "100%" }} value={offFilterCourse}>
                   <option value="">All Courses</option>
                   {allCourses.map(c => <option key={c._uuid} value={c._uuid}>{c.code} — {c.name}</option>)}
                 </Sel></FF>
@@ -1365,11 +1468,11 @@ export default function AdminCourseManagement({
 
               {mainTab === "mappings" && (
                 <>
-                  <FF label="Course"><Sel value={mapFilterCourse} onChange={(e) => setMapFilterCourse(e.target.value)} style={{ width: "100%", marginBottom: "12px" }}>
+                  <FF label="Course"><Sel onChange={(e) => setMapFilterCourse(e.target.value)} style={{ marginBottom: "12px", width: "100%" }} value={mapFilterCourse}>
                     <option value="">All Courses</option>
                     {allCourses.map(c => <option key={c._uuid} value={c._uuid}>{c.code}</option>)}
                   </Sel></FF>
-                  <FF label="Program"><Sel value={mapFilterProg} onChange={(e) => setMapFilterProg(e.target.value)} style={{ width: "100%", marginBottom: "12px" }}>
+                  <FF label="Program"><Sel onChange={(e) => setMapFilterProg(e.target.value)} style={{ marginBottom: "12px", width: "100%" }} value={mapFilterProg}>
                     <option value="">All Programs</option>
                     {programs.map(p => <option key={p.program_id} value={p.program_id}>{p.code}</option>)}
                   </Sel></FF>
@@ -1377,7 +1480,7 @@ export default function AdminCourseManagement({
               )}
 
               <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "16px" }}>
-                <Btn onClick={() => setShowFilterModal(false)} variant="secondary" style={{ marginRight: "8px" }}>Cancel</Btn>
+                <Btn onClick={() => setShowFilterModal(false)} style={{ marginRight: "8px" }} variant="secondary">Cancel</Btn>
                 <Btn onClick={handleApplyFilters}>Apply Filters</Btn>
               </div>
             </div>
@@ -1386,9 +1489,9 @@ export default function AdminCourseManagement({
 
         {showOfferingDetailsModal && viewOfferingSection && (
           <div style={{ alignItems: "center", background: "rgba(0,0,0,0.5)", bottom: 0, display: "flex", justifyContent: "center", left: 0, position: "fixed", right: 0, top: 0, zIndex: 1000 }}>
-            <div style={{ background: "#1e293b", borderRadius: "8px", padding: "24px", width: "800px", display: "flex", flexDirection: "column", maxHeight: "85vh" }}>
+            <div style={{ background: "#1e293b", borderRadius: "8px", display: "flex", flexDirection: "column", maxHeight: "85vh", padding: "24px", width: "800px" }}>
               <h3 style={{ color: "#f1f5f9", margin: "0 0 8px 0" }}>Section Details</h3>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", marginBottom: "16px", background: "#0f172a", padding: "12px", borderRadius: "8px", border: "1px solid #334155" }}>
+              <div style={{ background: "#0f172a", border: "1px solid #334155", borderRadius: "8px", display: "grid", gap: "12px", gridTemplateColumns: "1fr 1fr", marginBottom: "16px", padding: "12px" }}>
                 <div><span style={{ color: "#64748b", fontSize: "12px" }}>Course:</span> <span style={{ color: "#f1f5f9", fontSize: "13px", fontWeight: 700 }}>{viewOfferingSection.course_code} - {viewOfferingSection.course_name}</span></div>
                 <div><span style={{ color: "#64748b", fontSize: "12px" }}>Section:</span> <span style={{ color: "#f1f5f9", fontSize: "13px", fontWeight: 700 }}>{viewOfferingSection.section_label}</span></div>
                 <div><span style={{ color: "#64748b", fontSize: "12px" }}>Teacher:</span> <span style={{ color: "#f1f5f9", fontSize: "13px", fontWeight: 700 }}>{users.find(u => String(u._uuid) === String(viewOfferingSection.teacher_id))?.fullName || "Unassigned"}</span></div>
@@ -1398,16 +1501,16 @@ export default function AdminCourseManagement({
               </div>
               
               <div style={{ display: "flex", gap: "10px", marginBottom: "12px" }}>
-                <Input value={enrolledSearch} onChange={(e) => setEnrolledSearch(e.target.value)} placeholder="Search enrolled student..." style={{ width: 200 }} />
-                <Sel value={enrolledFilter} onChange={(e) => setEnrolledFilter(e.target.value)} style={{ width: 150 }}>
+                <Input onChange={(e) => setEnrolledSearch(e.target.value)} placeholder="Search enrolled student..." style={{ width: 200 }} value={enrolledSearch} />
+                <Sel onChange={(e) => setEnrolledFilter(e.target.value)} style={{ width: 150 }} value={enrolledFilter}>
                   <option value="">All Statuses</option>
                   <option value="Enrolled">Enrolled</option>
                   <option value="Waitlisted">Waitlisted</option>
                 </Sel>
-                <Btn onClick={() => downloadCSVExport(filteredOfferingEnrollments, `Roster_${viewOfferingSection.section_label}.csv`)} size="sm" variant="ghost" style={{ marginLeft: "auto" }}>Export CSV</Btn>
+                <Btn onClick={() => downloadExportCSV(filteredOfferingEnrollments, `Roster_${viewOfferingSection.section_label}.csv`)} size="sm" style={{ marginLeft: "auto" }} variant="ghost">Export CSV</Btn>
               </div>
 
-              <div style={{ flex: 1, minHeight: "300px", overflow: "hidden", border: "1px solid #334155", borderRadius: "8px", background: "#0a0f1a" }}>
+              <div style={{ background: "#0a0f1a", border: "1px solid #334155", borderRadius: "8px", flex: 1, minHeight: "300px", overflow: "hidden" }}>
                 <LMSGrid columns={enrolledCols} height="100%" rowData={filteredOfferingEnrollments} />
               </div>
               <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "16px" }}><Btn onClick={() => setShowOfferingDetailsModal(false)} variant="secondary">Close</Btn></div>
@@ -1421,18 +1524,18 @@ export default function AdminCourseManagement({
               <h3 style={{ color: "#f1f5f9", margin: "0 0 8px 0" }}>Material Audit</h3>
               <div style={{ color: "#94a3b8", fontSize: "12px", marginBottom: "16px" }}>Viewing files uploaded by the teacher for {selCourse?.code} - Section {selSection?.section_label}.</div>
 
-              <div style={{ maxHeight: "300px", overflowY: "auto", border: "1px solid #334155", borderRadius: "8px", background: "#0f172a" }}>
-                 {loading ? <div style={{ padding: "20px", textAlign: "center", color: "#64748b", fontSize: "13px" }}>Loading materials...</div> : null}
+              <div style={{ background: "#0f172a", border: "1px solid #334155", borderRadius: "8px", maxHeight: "300px", overflowY: "auto" }}>
+                 {loading ? <div style={{ color: "#64748b", fontSize: "13px", padding: "20px", textAlign: "center" }}>Loading materials...</div> : null}
                  {!loading && auditMaterials.map(m => (
-                    <div key={m.material_id} style={{ display: "flex", justifyContent: "space-between", padding: "12px", borderBottom: "1px solid #1e293b", color: "#e2e8f0", fontSize: "13px" }}>
+                    <div key={m.material_id} style={{ borderBottom: "1px solid #1e293b", color: "#e2e8f0", display: "flex", fontSize: "13px", justifyContent: "space-between", padding: "12px" }}>
                        <div>
                          <div style={{ fontWeight: 700, marginBottom: "4px" }}>{m.title}</div>
-                         <div style={{ fontSize: "11px", color: "#64748b" }}>Type: <span style={{ color: "#a5b4fc" }}>{m.material_type}</span></div>
+                         <div style={{ color: "#64748b", fontSize: "11px" }}>Type: <span style={{ color: "#a5b4fc" }}>{m.material_type}</span></div>
                        </div>
-                       {m.file_url && <a href={m.file_url} target="_blank" rel="noreferrer" style={{ color: "#34d399", textDecoration: "none", alignSelf: "center", fontSize: "12px", fontWeight: 700 }}>Open File ↗</a>}
+                       {m.file_url && <a href={m.file_url} rel="noreferrer" style={{ alignSelf: "center", color: "#34d399", fontSize: "12px", fontWeight: 700, textDecoration: "none" }} target="_blank">Open File ↗</a>}
                     </div>
                  ))}
-                 {!loading && auditMaterials.length === 0 && <div style={{ padding: "20px", textAlign: "center", color: "#64748b", fontSize: "13px" }}>No materials have been uploaded by the teacher yet.</div>}
+                 {!loading && auditMaterials.length === 0 && <div style={{ color: "#64748b", fontSize: "13px", padding: "20px", textAlign: "center" }}>No materials have been uploaded by the teacher yet.</div>}
               </div>
               <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "16px" }}><Btn onClick={() => setShowAuditModal(false)} variant="secondary">Close</Btn></div>
             </div>
@@ -1442,27 +1545,27 @@ export default function AdminCourseManagement({
         {showRoomModal && (
           <div style={{ alignItems: "center", background: "rgba(0,0,0,0.5)", bottom: 0, display: "flex", justifyContent: "center", left: 0, position: "fixed", right: 0, top: 0, zIndex: 1000 }}>
             <div style={{ background: "#1e293b", borderRadius: "8px", padding: "24px", width: "500px" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+              <div style={{ alignItems: "center", display: "flex", justifyContent: "space-between", marginBottom: "16px" }}>
                 <h3 style={{ color: "#f1f5f9", margin: 0 }}>Manage Rooms</h3>
                 <div style={{ display: "flex", gap: "8px" }}>
                   <Btn onClick={() => downloadCSVTemplate("rooms")} size="sm" variant="ghost">Template</Btn>
                   <Btn onClick={() => { setImportType("rooms"); fileInputRef.current?.click(); }} size="sm" variant="ghost">Import CSV</Btn>
-                  <Btn onClick={() => downloadCSVExport(rooms, "Rooms_Export.csv")} size="sm" variant="ghost">Export CSV</Btn>
+                  <Btn onClick={() => downloadExportCSV(rooms, "Rooms_Export.csv")} size="sm" variant="ghost">Export CSV</Btn>
                 </div>
               </div>
               <div style={{ display: "flex", gap: "8px", marginBottom: "16px" }}>
-                 <Input onChange={(e) => setNewRoomForm({...newRoomForm, name: e.target.value})} placeholder="Room Name (e.g. Rm 201)" value={newRoomForm.name} style={{ flex: 1 }} />
-                 <Input type="number" onChange={(e) => setNewRoomForm({...newRoomForm, capacity: Number(e.target.value)})} placeholder="Cap" value={newRoomForm.capacity} style={{ width: "70px" }} />
+                 <Input onChange={(e) => setNewRoomForm({...newRoomForm, name: e.target.value})} placeholder="Room Name (e.g. Rm 201)" style={{ flex: 1 }} value={newRoomForm.name} />
+                 <Input onChange={(e) => setNewRoomForm({...newRoomForm, capacity: Number(e.target.value)})} placeholder="Cap" style={{ width: "70px" }} type="number" value={newRoomForm.capacity} />
                  <Btn onClick={handleCreateRoom}>Add Room</Btn>
               </div>
-              <div style={{ maxHeight: "300px", overflowY: "auto", border: "1px solid #334155", borderRadius: "8px", background: "#0f172a" }}>
+              <div style={{ background: "#0f172a", border: "1px solid #334155", borderRadius: "8px", maxHeight: "300px", overflowY: "auto" }}>
                  {rooms.map(r => (
-                    <div key={r.room_id} style={{ display: "flex", justifyContent: "space-between", padding: "10px", borderBottom: "1px solid #1e293b", color: "#e2e8f0", fontSize: "13px" }}>
+                    <div key={r.room_id} style={{ borderBottom: "1px solid #1e293b", color: "#e2e8f0", display: "flex", fontSize: "13px", justifyContent: "space-between", padding: "10px" }}>
                        <span>{r.room_name} (Max {r.capacity})</span>
                        <button onClick={() => handleDeleteRoom(r.room_id)} style={{ background: "none", border: "none", color: "#f87171", cursor: "pointer" }}>✕</button>
                     </div>
                  ))}
-                 {rooms.length === 0 && <div style={{ padding: "20px", textAlign: "center", color: "#64748b", fontSize: "13px" }}>No rooms added yet.</div>}
+                 {rooms.length === 0 && <div style={{ color: "#64748b", fontSize: "13px", padding: "20px", textAlign: "center" }}>No rooms added yet.</div>}
               </div>
               <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "16px" }}><Btn onClick={() => setShowRoomModal(false)} variant="secondary">Close</Btn></div>
             </div>
@@ -1472,9 +1575,9 @@ export default function AdminCourseManagement({
         {showCreateCodeModal && (
           <div style={{ alignItems: "center", background: "rgba(0,0,0,0.5)", bottom: 0, display: "flex", justifyContent: "center", left: 0, position: "fixed", right: 0, top: 0, zIndex: 1000 }}>
             <div style={{ background: "#1e293b", borderRadius: "8px", padding: "24px", width: "400px" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+              <div style={{ alignItems: "center", display: "flex", justifyContent: "space-between", marginBottom: "16px" }}>
                 <h3 style={{ color: "#f1f5f9", margin: 0 }}>Create Code Group</h3>
-                <Btn onClick={() => downloadCSVTemplate("courses")} size="sm" variant="ghost">Download Courses Template</Btn>
+                <Btn onClick={() => downloadCSVTemplate("courses")} size="sm" variant="ghost">Download Template</Btn>
               </div>
               <Input onChange={(e) => setNewCodePrefix(e.target.value.toUpperCase())} placeholder="Enter prefix (e.g. CS)" style={{ marginBottom: "16px" }} value={newCodePrefix} />
               <div style={{ display: "flex", gap: "8px", justifyContent: "flex-end" }}><Btn onClick={() => setShowCreateCodeModal(false)} variant="secondary">Cancel</Btn><Btn onClick={() => { drillCode(newCodePrefix); setShowCreateCodeModal(false); setNewCodePrefix(""); }}>Create</Btn></div>
@@ -1488,24 +1591,28 @@ export default function AdminCourseManagement({
               <h3 style={{ color: "#f1f5f9", margin: "0 0 16px 0" }}>Create Course</h3>
               <Input onChange={(e) => setCourseForm({ ...courseForm, code: e.target.value })} placeholder="Course Code (e.g. CS101)" style={{ marginBottom: "12px" }} value={courseForm.code} />
               <Input onChange={(e) => setCourseForm({ ...courseForm, name: e.target.value })} placeholder="Course Name" style={{ marginBottom: "12px" }} value={courseForm.name} />
-              <Input onChange={(e) => setCourseForm({ ...courseForm, units: Number(e.target.value) })} placeholder="Units" style={{ marginBottom: "16px" }} type="number" value={courseForm.units} />
+              <div style={{ display: "grid", gap: "10px", gridTemplateColumns: "1fr 1fr 1fr", marginBottom: "16px" }}>
+                <FF label="Total Units"><Input onChange={(e) => setCourseForm({ ...courseForm, units: Number(e.target.value) })} placeholder="Units" type="number" value={courseForm.units} /></FF>
+                <FF label="Lec Hrs"><Input onChange={(e) => setCourseForm({ ...courseForm, lec: Number(e.target.value) })} placeholder="Lec" type="number" value={courseForm.lec} /></FF>
+                <FF label="Lab Hrs"><Input onChange={(e) => setCourseForm({ ...courseForm, lab: Number(e.target.value) })} placeholder="Lab" type="number" value={courseForm.lab} /></FF>
+              </div>
               
-              <div style={{ borderTop: "1px solid #334155", paddingTop: "12px", marginBottom: "16px" }}>
+              <div style={{ borderTop: "1px solid #334155", marginBottom: "16px", paddingTop: "12px" }}>
                  <div style={{ color: "#f1f5f9", fontSize: "13px", fontWeight: 700, marginBottom: "8px" }}>Prerequisites</div>
                  <div style={{ display: "flex", gap: "8px", marginBottom: "8px" }}>
-                   <Sel value="" onChange={(e) => { if(e.target.value && !courseForm.prereqs.includes(e.target.value)) setCourseForm({...courseForm, prereqs: [...courseForm.prereqs, e.target.value]}) }} style={{ flex: 1 }}>
+                   <Sel onChange={(e) => { if(e.target.value && !courseForm.prereqs.includes(e.target.value)) setCourseForm({...courseForm, prereqs: [...courseForm.prereqs, e.target.value]}) }} style={{ flex: 1 }} value="">
                       <option value="">— Select to Add —</option>
                       {allCourses.map(c => <option key={c._uuid} value={c._uuid}>{c.code}</option>)}
                    </Sel>
                  </div>
                  <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
                    {courseForm.prereqs.map(pId => (
-                     <span key={pId} style={{ background: "rgba(99,102,241,.12)", color: "#a5b4fc", padding: "4px 8px", borderRadius: 4, fontSize: 11, display: "flex", alignItems: "center", gap: "6px" }}>
+                     <span key={pId} style={{ background: "rgba(99,102,241,.12)", borderRadius: 4, color: "#a5b4fc", display: "flex", fontSize: 11, gap: "6px", padding: "4px 8px" }}>
                        {allCourses.find(c => c._uuid === pId)?.code}
-                       <span onClick={() => setCourseForm({...courseForm, prereqs: courseForm.prereqs.filter(id => id !== pId)})} style={{ cursor: "pointer", color: "#f87171" }}>✕</span>
+                       <span onClick={() => setCourseForm({...courseForm, prereqs: courseForm.prereqs.filter(id => id !== pId)})} style={{ color: "#f87171", cursor: "pointer" }}>✕</span>
                      </span>
                    ))}
-                   {courseForm.prereqs.length === 0 && <span style={{ fontSize: "11px", color: "#64748b" }}>None added.</span>}
+                   {courseForm.prereqs.length === 0 && <span style={{ color: "#64748b", fontSize: "11px" }}>None added.</span>}
                  </div>
               </div>
 
@@ -1520,7 +1627,11 @@ export default function AdminCourseManagement({
               <h3 style={{ color: "#f1f5f9", margin: "0 0 16px 0" }}>Edit Course</h3>
               <Input onChange={(e) => setCourseForm({ ...courseForm, code: e.target.value })} placeholder="Course Code" style={{ marginBottom: "12px" }} value={courseForm.code} />
               <Input onChange={(e) => setCourseForm({ ...courseForm, name: e.target.value })} placeholder="Course Name" style={{ marginBottom: "12px" }} value={courseForm.name} />
-              <Input onChange={(e) => setCourseForm({ ...courseForm, units: Number(e.target.value) })} placeholder="Units" style={{ marginBottom: "16px" }} type="number" value={courseForm.units} />
+              <div style={{ display: "grid", gap: "10px", gridTemplateColumns: "1fr 1fr 1fr", marginBottom: "16px" }}>
+                <FF label="Total Units"><Input onChange={(e) => setCourseForm({ ...courseForm, units: Number(e.target.value) })} placeholder="Units" type="number" value={courseForm.units} /></FF>
+                <FF label="Lec Hrs"><Input onChange={(e) => setCourseForm({ ...courseForm, lec: Number(e.target.value) })} placeholder="Lec" type="number" value={courseForm.lec} /></FF>
+                <FF label="Lab Hrs"><Input onChange={(e) => setCourseForm({ ...courseForm, lab: Number(e.target.value) })} placeholder="Lab" type="number" value={courseForm.lab} /></FF>
+              </div>
               <div style={{ display: "flex", gap: "8px", justifyContent: "flex-end" }}><Btn onClick={() => setShowEditCourseModal(false)} variant="secondary">Cancel</Btn><Btn onClick={handleEditCourse}>Update Course</Btn></div>
             </div>
           </div>
@@ -1533,21 +1644,21 @@ export default function AdminCourseManagement({
               <div style={{ color: "#94a3b8", fontSize: "12px", marginBottom: "16px" }}>Students must pass the following courses to enroll in {selCourse?.code}.</div>
               
               <div style={{ display: "flex", gap: "8px", marginBottom: "16px" }}>
-                 <Sel value={prereqFormCourseId} onChange={(e) => setPrereqFormCourseId(e.target.value)} style={{ flex: 1 }}>
+                 <Sel onChange={(e) => setPrereqFormCourseId(e.target.value)} style={{ flex: 1 }} value={prereqFormCourseId}>
                     <option value="">— Select Course to Add —</option>
                     {allCourses.filter(c => c._uuid !== selCourse?._uuid).map(c => <option key={c._uuid} value={c._uuid}>{c.code} — {c.name}</option>)}
                  </Sel>
                  <Btn onClick={handleAddPrerequisite}>Add</Btn>
               </div>
 
-              <div style={{ maxHeight: "300px", overflowY: "auto", border: "1px solid #334155", borderRadius: "8px", background: "#0f172a" }}>
+              <div style={{ background: "#0f172a", border: "1px solid #334155", borderRadius: "8px", maxHeight: "300px", overflowY: "auto" }}>
                  {prerequisites.map(p => (
-                    <div key={p.id} style={{ display: "flex", justifyContent: "space-between", padding: "10px", borderBottom: "1px solid #1e293b", color: "#e2e8f0", fontSize: "13px" }}>
+                    <div key={p.id} style={{ borderBottom: "1px solid #1e293b", color: "#e2e8f0", display: "flex", fontSize: "13px", justifyContent: "space-between", padding: "10px" }}>
                        <span>{p.courses?.course_code} - {p.courses?.course_name}</span>
                        <button onClick={() => handleRemovePrerequisite(p.id)} style={{ background: "none", border: "none", color: "#f87171", cursor: "pointer" }}>✕</button>
                     </div>
                  ))}
-                 {prerequisites.length === 0 && <div style={{ padding: "20px", textAlign: "center", color: "#64748b", fontSize: "13px" }}>No prerequisites defined.</div>}
+                 {prerequisites.length === 0 && <div style={{ color: "#64748b", fontSize: "13px", padding: "20px", textAlign: "center" }}>No prerequisites defined.</div>}
               </div>
               
               <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "16px" }}><Btn onClick={() => setShowPrereqModal(false)} variant="secondary">Close</Btn></div>
@@ -1563,35 +1674,35 @@ export default function AdminCourseManagement({
                 This tool duplicates all active Course Sections from a past term into an upcoming term. Student enrollments are not copied.
               </div>
 
-              <div style={{ marginBottom: "16px", padding: "12px", background: "#0f172a", borderRadius: "8px", border: "1px solid #334155" }}>
-                <div style={{ color: "#f1f5f9", fontWeight: 700, fontSize: "13px", marginBottom: "8px" }}>Source (Copy From)</div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
-                  <Sel value={rolloverForm.sourceSyId} onChange={(e) => setRolloverForm({...rolloverForm, sourceSyId: e.target.value})} style={{ width: "100%" }}>
+              <div style={{ background: "#0f172a", border: "1px solid #334155", borderRadius: "8px", marginBottom: "16px", padding: "12px" }}>
+                <div style={{ color: "#f1f5f9", fontSize: "13px", fontWeight: 700, marginBottom: "8px" }}>Source (Copy From)</div>
+                <div style={{ display: "grid", gap: "10px", gridTemplateColumns: "1fr 1fr" }}>
+                  <FF label="SY"><Sel onChange={(e) => setRolloverForm({...rolloverForm, sourceSyId: e.target.value})} style={{ width: "100%" }} value={rolloverForm.sourceSyId}>
                       <option value="">— Source SY —</option>
                       {schoolYears.map(s => <option key={s.sy_id} value={s.sy_id}>{s.label}</option>)}
-                  </Sel>
-                  <Sel value={rolloverForm.sourceTerm} onChange={(e) => setRolloverForm({...rolloverForm, sourceTerm: e.target.value})} style={{ width: "100%" }}>
+                  </Sel></FF>
+                  <FF label="Term"><Sel onChange={(e) => setRolloverForm({...rolloverForm, sourceTerm: e.target.value})} style={{ width: "100%" }} value={rolloverForm.sourceTerm}>
                       {TERMS.map(t => <option key={t} value={t}>{t}</option>)}
-                  </Sel>
+                  </Sel></FF>
                 </div>
               </div>
 
-              <div style={{ marginBottom: "16px", padding: "12px", background: "#0f172a", borderRadius: "8px", border: "1px solid #334155" }}>
-                <div style={{ color: "#f1f5f9", fontWeight: 700, fontSize: "13px", marginBottom: "8px" }}>Target (Paste Into)</div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
-                  <Sel value={rolloverForm.targetSyId} onChange={(e) => setRolloverForm({...rolloverForm, targetSyId: e.target.value})} style={{ width: "100%" }}>
+              <div style={{ background: "#0f172a", border: "1px solid #334155", borderRadius: "8px", marginBottom: "16px", padding: "12px" }}>
+                <div style={{ color: "#f1f5f9", fontSize: "13px", fontWeight: 700, marginBottom: "8px" }}>Target (Paste Into)</div>
+                <div style={{ display: "grid", gap: "10px", gridTemplateColumns: "1fr 1fr" }}>
+                  <FF label="SY"><Sel onChange={(e) => setRolloverForm({...rolloverForm, targetSyId: e.target.value})} style={{ width: "100%" }} value={rolloverForm.targetSyId}>
                       <option value="">— Target SY —</option>
                       {schoolYears.map(s => <option key={s.sy_id} value={s.sy_id}>{s.label}</option>)}
-                  </Sel>
-                  <Sel value={rolloverForm.targetTerm} onChange={(e) => setRolloverForm({...rolloverForm, targetTerm: e.target.value})} style={{ width: "100%" }}>
+                  </Sel></FF>
+                  <FF label="Term"><Sel onChange={(e) => setRolloverForm({...rolloverForm, targetTerm: e.target.value})} style={{ width: "100%" }} value={rolloverForm.targetTerm}>
                       {TERMS.map(t => <option key={t} value={t}>{t}</option>)}
-                  </Sel>
+                  </Sel></FF>
                 </div>
               </div>
 
               <div style={{ display: "flex", gap: "8px", justifyContent: "flex-end" }}>
                 <Btn onClick={() => setShowRolloverModal(false)} variant="secondary">Cancel</Btn>
-                <Btn onClick={handleRollover} disabled={loading}>{loading ? "Processing..." : "Execute Rollover"}</Btn>
+                <Btn disabled={loading} onClick={handleRollover}>{loading ? "Processing..." : "Execute Rollover"}</Btn>
               </div>
             </div>
           </div>
@@ -1600,15 +1711,15 @@ export default function AdminCourseManagement({
         {showMappingModal && (
           <div style={{ alignItems: "center", background: "rgba(0,0,0,0.5)", bottom: 0, display: "flex", justifyContent: "center", left: 0, position: "fixed", right: 0, top: 0, zIndex: 1000 }}>
             <div style={{ background: "#1e293b", borderRadius: "8px", padding: "24px", width: "400px" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+              <div style={{ alignItems: "center", display: "flex", justifyContent: "space-between", marginBottom: "16px" }}>
                 <h3 style={{ color: "#f1f5f9", margin: 0 }}>Create Program Mapping</h3>
                 <Btn onClick={() => downloadCSVTemplate("mappings")} size="sm" variant="ghost">Template</Btn>
               </div>
-              <FF label="Course"><Sel value={mappingForm.courseId} onChange={e => setMappingForm({...mappingForm, courseId: e.target.value})} style={{ marginBottom: "12px", width: "100%" }}><option value="">— Select Course —</option>{allCourses.map(c => <option key={c._uuid} value={c._uuid}>{c.code} - {c.name}</option>)}</Sel></FF>
-              <FF label="Program"><Sel value={mappingForm.programId} onChange={e => setMappingForm({...mappingForm, programId: e.target.value})} style={{ marginBottom: "12px", width: "100%" }}><option value="">— Select Program —</option>{programs.map(p => <option key={p.program_id} value={p.program_id}>{p.code}</option>)}</Sel></FF>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", marginBottom: "16px" }}>
-                <FF label="Year"><Sel value={mappingForm.yearLevel} onChange={e => setMappingForm({...mappingForm, yearLevel: e.target.value})} style={{ width: "100%" }}>{YEAR_LEVELS.map(y => <option key={y} value={y}>{y}</option>)}</Sel></FF>
-                <FF label="Sem"><Sel value={mappingForm.semester} onChange={e => setMappingForm({...mappingForm, semester: e.target.value})} style={{ width: "100%" }}>{SEMESTERS.map(s => <option key={s} value={s}>{s}</option>)}</Sel></FF>
+              <FF label="Course"><Sel onChange={e => setMappingForm({...mappingForm, courseId: e.target.value})} style={{ marginBottom: "12px", width: "100%" }} value={mappingForm.courseId}><option value="">— Select Course —</option>{allCourses.map(c => <option key={c._uuid} value={c._uuid}>{c.code} - {c.name}</option>)}</Sel></FF>
+              <FF label="Program"><Sel onChange={e => setMappingForm({...mappingForm, programId: e.target.value})} style={{ marginBottom: "12px", width: "100%" }} value={mappingForm.programId}><option value="">— Select Program —</option>{programs.map(p => <option key={p.program_id} value={p.program_id}>{p.code}</option>)}</Sel></FF>
+              <div style={{ display: "grid", gap: "10px", gridTemplateColumns: "1fr 1fr", marginBottom: "16px" }}>
+                <FF label="Year"><Sel onChange={e => setMappingForm({...mappingForm, yearLevel: e.target.value})} style={{ width: "100%" }} value={mappingForm.yearLevel}>{YEAR_LEVELS.map(y => <option key={y} value={y}>{y}</option>)}</Sel></FF>
+                <FF label="Sem"><Sel onChange={e => setMappingForm({...mappingForm, semester: e.target.value})} style={{ width: "100%" }} value={mappingForm.semester}>{SEMESTERS.map(s => <option key={s} value={s}>{s}</option>)}</Sel></FF>
               </div>
               <div style={{ display: "flex", gap: "8px", justifyContent: "flex-end" }}><Btn onClick={() => setShowMappingModal(false)} variant="secondary">Cancel</Btn><Btn onClick={handleCreateMapping}>Save Mapping</Btn></div>
             </div>
@@ -1618,52 +1729,60 @@ export default function AdminCourseManagement({
         {(showCreateSectionModal || showEditSectionModal) && (
           <div style={{ alignItems: "center", background: "rgba(0,0,0,0.5)", bottom: 0, display: "flex", justifyContent: "center", left: 0, position: "fixed", right: 0, top: 0, zIndex: 1000 }}>
             <div style={{ background: "#1e293b", borderRadius: "8px", padding: "24px", width: "450px" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+              <div style={{ alignItems: "center", display: "flex", justifyContent: "space-between", marginBottom: "16px" }}>
                 <h3 style={{ color: "#f1f5f9", margin: 0 }}>{showEditSectionModal ? "Edit Section Setup" : "Create Section"}</h3>
                 {!showEditSectionModal && <Btn onClick={() => downloadCSVTemplate("sections")} size="sm" variant="ghost">Template</Btn>}
               </div>
               
               {!selCourse && mainTab === "offerings" && !showEditSectionModal && (
-                <Sel value={sectionForm.courseId} onChange={(e) => setSectionForm({...sectionForm, courseId: e.target.value})} style={{ marginBottom: "12px", width: "100%" }}>
+                <Sel onChange={(e) => setSectionForm({...sectionForm, courseId: e.target.value})} style={{ marginBottom: "12px", width: "100%" }} value={sectionForm.courseId}>
                    <option value="">— Select Course —</option>
                    {allCourses.map(c => <option key={c._uuid} value={c._uuid}>{c.code} — {c.name}</option>)}
                 </Sel>
               )}
 
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", marginBottom: "12px" }}>
-                 <Sel value={sectionForm.syId} onChange={(e) => setSectionForm({...sectionForm, syId: e.target.value})} disabled={showEditSectionModal} style={{ width: "100%", opacity: showEditSectionModal ? 0.6 : 1 }}>
+              <div style={{ display: "grid", gap: "10px", gridTemplateColumns: "1fr 1fr", marginBottom: "12px" }}>
+                 <Sel disabled={showEditSectionModal} onChange={(e) => setSectionForm({...sectionForm, syId: e.target.value})} style={{ opacity: showEditSectionModal ? 0.6 : 1, width: "100%" }} value={sectionForm.syId}>
                     <option value="">— Select SY —</option>
                     {schoolYears.map(s => <option key={s.sy_id} value={s.sy_id}>{s.label}</option>)}
                  </Sel>
-                 <Sel value={sectionForm.term} onChange={(e) => setSectionForm({...sectionForm, term: e.target.value})} disabled={showEditSectionModal} style={{ width: "100%", opacity: showEditSectionModal ? 0.6 : 1 }}>
+                 <Sel disabled={showEditSectionModal} onChange={(e) => setSectionForm({...sectionForm, term: e.target.value})} style={{ opacity: showEditSectionModal ? 0.6 : 1, width: "100%" }} value={sectionForm.term}>
                     {TERMS.map(t => <option key={t} value={t}>{t}</option>)}
                  </Sel>
               </div>
 
               <div style={{ display: "flex", gap: "10px", marginBottom: "12px" }}>
-                 <Input value={sectionForm.sectionLabel} onChange={(e) => setSectionForm({...sectionForm, sectionLabel: e.target.value.toUpperCase()})} disabled={showEditSectionModal} placeholder="Label" style={{ width: "80px", opacity: showEditSectionModal ? 0.6 : 1 }} />
-                 <div style={{ fontSize: "11px", color: "#64748b", alignSelf: "center", lineHeight: "1.2" }}>
+                 <Input disabled={showEditSectionModal} onChange={(e) => setSectionForm({...sectionForm, sectionLabel: e.target.value.toUpperCase()})} placeholder="Label" style={{ opacity: showEditSectionModal ? 0.6 : 1, width: "80px" }} value={sectionForm.sectionLabel} />
+                 <div style={{ alignSelf: "center", color: "#64748b", fontSize: "11px", lineHeight: "1.2" }}>
                    {showEditSectionModal ? "Course identifiers cannot be changed after creation." : "Auto-generates next available code. Edit to override."}
                  </div>
               </div>
 
-              <Sel value={sectionForm.teacherId} onChange={(e) => setSectionForm({...sectionForm, teacherId: e.target.value})} style={{ marginBottom: "4px", width: "100%" }}>
+              <Sel onChange={(e) => setSectionForm({...sectionForm, teacherId: e.target.value})} style={{ marginBottom: "4px", width: "100%" }} value={sectionForm.teacherId}>
                  <option value="">— Select Teacher —</option>
                  {users.filter(u => u.role === "teacher").map(t => <option key={t._uuid} value={t._uuid}>{t.fullName}</option>)}
               </Sel>
-              {teacherWorkload !== null && <div style={{ fontSize: "11px", color: "#fbbf24", marginBottom: "12px", fontWeight: 700 }}>Active Workload This Term: {teacherWorkload} Units</div>}
+              {teacherWorkload !== null && <div style={{ color: "#fbbf24", fontSize: "11px", fontWeight: 700, marginBottom: "12px" }}>Active Workload This Term: {teacherWorkload} Units</div>}
 
-              <Sel value={sectionForm.roomId} onChange={(e) => setSectionForm({...sectionForm, roomId: e.target.value})} style={{ marginBottom: "12px", width: "100%" }}>
+              <Sel onChange={(e) => setSectionForm({...sectionForm, roomId: e.target.value})} style={{ marginBottom: "12px", width: "100%" }} value={sectionForm.roomId}>
                  <option value="">— Select Room —</option>
                  {rooms.map(r => <option key={r.room_id} value={r.room_id}>{r.room_name} (Max {r.capacity})</option>)}
               </Sel>
 
-              <Sel value={sectionForm.scheduleLabel} onChange={(e) => setSectionForm({...sectionForm, scheduleLabel: e.target.value})} style={{ marginBottom: "12px", width: "100%" }}>
-                 <option value="">— Select Schedule Block —</option>
-                 {SCHEDULE_BLOCKS.map(block => <option key={block} value={block}>{block}</option>)}
-              </Sel>
+              <div style={{ marginBottom: "12px" }}>
+                <Input list="schedule-options" onChange={(e) => setSectionForm({...sectionForm, scheduleLabel: e.target.value})} placeholder="Schedule (e.g. MWF 7-8AM)" style={{ width: "100%" }} value={sectionForm.scheduleLabel} />
+                <datalist id="schedule-options">
+                  {SCHEDULE_BLOCKS.map(block => <option key={block} value={block} />)}
+                </datalist>
+              </div>
 
-              <Input type="number" value={sectionForm.maxCapacity} onChange={(e) => setSectionForm({...sectionForm, maxCapacity: Number(e.target.value)})} placeholder="Max Capacity" style={{ marginBottom: "16px" }} />
+              <div style={{ alignItems: "center", display: "flex", gap: "10px", marginBottom: "16px" }}>
+                <Input disabled={sectionForm.isUnlimited} onChange={(e) => setSectionForm({...sectionForm, maxCapacity: Number(e.target.value)})} placeholder="Max Capacity" style={{ width: "120px" }} type="number" value={sectionForm.maxCapacity} />
+                <label style={{ alignItems: "center", color: "#f1f5f9", cursor: "pointer", display: "flex", fontSize: "13px", gap: "6px" }}>
+                  <input checked={sectionForm.isUnlimited} onChange={e => setSectionForm({...sectionForm, isUnlimited: e.target.checked})} type="checkbox" />
+                  No Limit
+                </label>
+              </div>
 
               <div style={{ display: "flex", gap: "8px", justifyContent: "flex-end" }}>
                 <Btn onClick={() => { setShowCreateSectionModal(false); setShowEditSectionModal(false); }} variant="secondary">Cancel</Btn>
