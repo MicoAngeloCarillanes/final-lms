@@ -23,20 +23,33 @@ interface SortState {
   dir: "asc" | "desc";
 }
 
-const TERMS = ["Prelim", "Midterm", "Semi-Final", "Finals"];
 const SEMESTERS = ["1st Semester", "2nd Semester", "Summer"];
 const YEAR_LEVELS = ["1st Year", "2nd Year", "3rd Year", "4th Year", "5th Year"];
-const SCHEDULE_BLOCKS = [
-  "MWF 7:30 AM - 8:30 AM", "MWF 8:30 AM - 9:30 AM", "MWF 9:30 AM - 10:30 AM",
-  "TTh 7:30 AM - 9:00 AM", "TTh 9:00 AM - 10:30 AM", "TTh 10:30 AM - 12:00 PM",
-  "Sat 8:00 AM - 11:00 AM", "Sat 1:00 PM - 4:00 PM"
+
+const DAYS_OF_WEEK = [
+  { label: "M", value: "M" },
+  { label: "T", value: "T" },
+  { label: "W", value: "W" },
+  { label: "Th", value: "Th" },
+  { label: "F", value: "F" },
+  { label: "S", value: "Sat" },
+  { label: "Su", value: "Sun" }
+];
+
+const TIME_SLOTS = [
+  "7:00 AM", "7:30 AM", "8:00 AM", "8:30 AM", "9:00 AM", "9:30 AM", "10:00 AM", "10:30 AM", 
+  "11:00 AM", "11:30 AM", "12:00 PM", "12:30 PM", "1:00 PM", "1:30 PM", "2:00 PM", "2:30 PM", 
+  "3:00 PM", "3:30 PM", "4:00 PM", "4:30 PM", "5:00 PM", "5:30 PM", "6:00 PM", "6:30 PM", 
+  "7:00 PM", "7:30 PM", "8:00 PM", "8:30 PM", "9:00 PM"
 ];
 
 const CSV_TEMPLATES = {
   courses: "Course Code,Course Name,Units,Lec Hours,Lab Hours,Prerequisite Codes (comma separated)\nCS101,Intro to Computing,3,2,1,\nCS102,Data Structures,3,2,1,CS101\nCS103,Algorithms,3,3,0,\"CS101, CS102\"",
-  sections: "Course Code,Section Label,Term,Room Name,Schedule Label,Max Capacity\nCS101,A,1st Semester,Rm 201,MWF 7:30 AM - 8:30 AM,40",
+  sections: "Course Code,Section Label,Semester,Year Level,Program Code,Room Name,Schedule Label,Max Capacity\nCS101,A,1st Semester,1st Year,BSCS,Rm 201,MWF 7:30 AM - 8:30 AM,40",
   mappings: "Course Code,Program Code,Year Level,Semester\nCS101,BSCS,1st Year,1st Semester",
-  rooms: "Room Name,Capacity\nRm 201,40\nLab 1,30"
+  rooms: "Room Name,Capacity\nRm 201,40\nLab 1,30",
+  students_to_section: "Student ID\n2025-0001\n2025-0002",
+  global_enrollment: "Student ID,Course Code,Section Label\n2025-0001,CS101,A\n2025-0001,CS102,A\n2025-0002,CS101,B"
 };
 
 export default function AdminCourseManagement({
@@ -48,12 +61,14 @@ export default function AdminCourseManagement({
 }: AdminCourseManagementProps) {
   const { enrollStudent, isLoading, updateCompletionStatus } = useCourseStore();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const studentCsvRef = useRef<HTMLInputElement>(null);
 
   const [mainTab, setMainTab] = useState<"catalog" | "offerings" | "mappings" | "curriculum">("catalog");
 
   const [allCourses, setAllCourses] = useState<any[]>([]);
   const [programs, setPrograms] = useState<any[]>([]);
   const [rooms, setRooms] = useState<any[]>([]);
+  const [schedules, setSchedules] = useState<any[]>([]);
   const [schoolYears, setSchoolYears] = useState<any[]>([]);
   const [studentsList, setStudentsList] = useState<any[]>([]);
   const [globalPrereqs, setGlobalPrereqs] = useState<Record<string, string[]>>({});
@@ -71,7 +86,7 @@ export default function AdminCourseManagement({
   const [offerings, setOfferings] = useState<any[]>([]);
   const [offFilterCourse, setOffFilterCourse] = useState("");
   const [offFilterSy, setOffFilterSy] = useState("");
-  const [offFilterTerm, setOffFilterTerm] = useState("1st Semester");
+  const [offFilterSemester, setOffFilterSemester] = useState("1st Semester");
   const [offPage, setOffPage] = useState(0);
   const offPageSize = 20;
 
@@ -99,7 +114,7 @@ export default function AdminCourseManagement({
   const [enrolledFilter, setEnrolledFilter] = useState("");
   
   const [showFilterModal, setShowFilterModal] = useState(false);
-  const [importType, setImportType] = useState<"courses" | "sections" | "mappings" | "rooms" | null>(null);
+  const [importType, setImportType] = useState<"courses" | "sections" | "mappings" | "rooms" | "global_enrollments" | null>(null);
 
   const [codeSort, setCodeSort] = useState<SortState>({ field: "prefix", dir: "asc" });
   const [courseSort, setCourseSort] = useState<SortState>({ field: "course_code", dir: "asc" });
@@ -110,15 +125,24 @@ export default function AdminCourseManagement({
   const [courseForm, setCourseForm] = useState<{code: string, name: string, units: number, lec: number, lab: number, prereqs: string[]}>({ code: "", name: "", units: 3, lec: 3, lab: 0, prereqs: [] });
   const [mappingForm, setMappingForm] = useState({ courseId: "", programId: "", yearLevel: "1st Year", semester: "1st Semester" });
   const [newRoomForm, setNewRoomForm] = useState({ name: "", capacity: 40 });
-  const [sectionForm, setSectionForm] = useState({ courseId: "", maxCapacity: 30, roomId: "", scheduleLabel: "", sectionLabel: "A", syId: "", teacherId: "", term: "1st Semester", isUnlimited: false, yearLevel: "1st Year" });
+  const [newSchedDays, setNewSchedDays] = useState<string[]>([]);
+  const [newSchedStart, setNewSchedStart] = useState("");
+  const [newSchedEnd, setNewSchedEnd] = useState("");
+  
+  const [sectionForm, setSectionForm] = useState({ courseId: "", maxCapacity: 30, roomId: "", scheduleLabel: "", sectionLabel: "A", syId: "", teacherId: "", semester: "1st Semester", isUnlimited: false, yearLevel: "1st Year", programId: "" });
   const [prereqFormCourseId, setPrereqFormCourseId] = useState("");
   const [prerequisites, setPrerequisites] = useState<any[]>([]);
-  const [rolloverForm, setRolloverForm] = useState({ sourceSyId: "", sourceTerm: "1st Semester", targetSyId: "", targetTerm: "2nd Semester" });
+  const [rolloverForm, setRolloverForm] = useState({ sourceSyId: "", sourceSemester: "1st Semester", targetSyId: "", targetSemester: "2nd Semester" });
   const [auditMaterials, setAuditMaterials] = useState<any[]>([]);
   const [teacherWorkload, setTeacherWorkload] = useState<number | null>(null);
 
   const [viewOfferingSection, setViewOfferingSection] = useState<any>(null);
   const [offeringEnrollments, setOfferingEnrollments] = useState<any[]>([]);
+
+  const [showManualEnrollModal, setShowManualEnrollModal] = useState(false);
+  const [manualEnrollStudentId, setManualEnrollStudentId] = useState<string>("");
+  const [manualEnrollSections, setManualEnrollSections] = useState<string[]>([]);
+  const [manualEnrollSearch, setManualEnrollSearch] = useState("");
 
   const [loading, setLoading] = useState(false);
   const [newCodePrefix, setNewCodePrefix] = useState("");
@@ -131,6 +155,7 @@ export default function AdminCourseManagement({
   const [showPrereqModal, setShowPrereqModal] = useState(false);
   const [showRolloverModal, setShowRolloverModal] = useState(false);
   const [showRoomModal, setShowRoomModal] = useState(false);
+  const [showScheduleModal, setShowScheduleModal] = useState(false);
   const [showAuditModal, setShowAuditModal] = useState(false);
   const [showOfferingDetailsModal, setShowOfferingDetailsModal] = useState(false);
   const [toast, setToast] = useState<ToastState>({ msg: "", type: "success" });
@@ -150,10 +175,10 @@ export default function AdminCourseManagement({
   }, [courseSort, selCode]);
 
   useEffect(() => {
-    if (mainTab === "catalog" && level === "section" && selCourse && offFilterSy && offFilterTerm) {
+    if (mainTab === "catalog" && level === "section" && selCourse && offFilterSy && offFilterSemester) {
       void loadCatalogSectionsAPI();
     }
-  }, [sectionSort, selCourse, offFilterSy, offFilterTerm]);
+  }, [sectionSort, selCourse, offFilterSy, offFilterSemester]);
 
   useEffect(() => {
     if (mainTab === "offerings") void loadOfferingsAPI();
@@ -165,11 +190,11 @@ export default function AdminCourseManagement({
 
   useEffect(() => {
     async function fetchNextCode() {
-      if (!sectionForm.courseId || !sectionForm.syId || !sectionForm.term || showEditSectionModal) return;
+      if (!sectionForm.courseId || !sectionForm.syId || !sectionForm.semester || showEditSectionModal) return;
       const { data } = await supabase.from("course_sections").select("section_label")
         .eq("course_id", sectionForm.courseId)
         .eq("sy_id", sectionForm.syId)
-        .eq("term", sectionForm.term);
+        .eq("semester", sectionForm.semester);
       
       const used = new Set((data || []).map(s => s.section_label));
       let next = "A";
@@ -179,11 +204,11 @@ export default function AdminCourseManagement({
       setSectionForm(prev => ({ ...prev, sectionLabel: next }));
     }
     void fetchNextCode();
-  }, [sectionForm.courseId, sectionForm.syId, sectionForm.term, showEditSectionModal]);
+  }, [sectionForm.courseId, sectionForm.syId, sectionForm.semester, showEditSectionModal]);
 
   useEffect(() => {
     async function fetchWorkload() {
-      if (!sectionForm.teacherId || !sectionForm.syId || !sectionForm.term) {
+      if (!sectionForm.teacherId || !sectionForm.syId || !sectionForm.semester) {
         setTeacherWorkload(null);
         return;
       }
@@ -191,13 +216,27 @@ export default function AdminCourseManagement({
         .select("courses!inner(units)")
         .eq("teacher_id", sectionForm.teacherId)
         .eq("sy_id", sectionForm.syId)
-        .eq("term", sectionForm.term);
+        .eq("semester", sectionForm.semester);
       
       const totalUnits = (data || []).reduce((acc: number, curr: any) => acc + (curr.courses?.units || 0), 0);
       setTeacherWorkload(totalUnits);
     }
     void fetchWorkload();
-  }, [sectionForm.teacherId, sectionForm.syId, sectionForm.term]);
+  }, [sectionForm.teacherId, sectionForm.syId, sectionForm.semester]);
+
+  useEffect(() => {
+    if (selSection && selSection.program_id && selSection.year_level) {
+      const eligible = studentsList.filter(s => 
+        s.programId === selSection.program_id && 
+        s.yearLevel === selSection.year_level
+      );
+      const enrolledIds = new Set(sectionEnrollments.filter(e => e.section_id === selSection.section_id).map(e => String(e.student_id)));
+      const toSelect = eligible.filter(s => !enrolledIds.has(String(s._uuid))).map(s => s._uuid);
+      setSelStudents(toSelect);
+    } else {
+      setSelStudents([]);
+    }
+  }, [selSection, studentsList, sectionEnrollments]);
 
   void globalCourses; void enrollments; void setGlobalCourses; void setEnrollments;
 
@@ -231,16 +270,18 @@ export default function AdminCourseManagement({
   }
 
   async function loadReferences() {
-    const [syRes, roomRes, progRes] = await Promise.all([
+    const [syRes, roomRes, progRes, schedRes] = await Promise.all([
       supabase.from("school_years").select("sy_id, label, is_active, is_locked").order("created_at", { ascending: false }),
       supabase.from("rooms").select("*").order("room_name"),
-      supabase.from("program").select("program_id, name, code").eq("is_active", true)
+      supabase.from("program").select("program_id, name, code").eq("is_active", true),
+      supabase.from("schedules").select("*").order("schedule_label")
     ]);
 
     const sys = syRes.data || [];
     setSchoolYears(sys);
     setRooms(roomRes.data || []);
     setPrograms(progRes.data || []);
+    setSchedules(schedRes.data || []);
 
     const activeSy = sys.find((s) => s.is_active);
     if (activeSy) {
@@ -322,13 +363,13 @@ export default function AdminCourseManagement({
   async function loadCatalogSectionsAPI() {
     if (!selCourse) return;
     setLoading(true);
-    let q = supabase.from("course_sections").select(`*, rooms(room_name)`).eq("course_id", selCourse._uuid).eq("sy_id", offFilterSy).eq("term", offFilterTerm);
+    let q = supabase.from("course_sections").select(`*, rooms(room_name), program(code)`).eq("course_id", selCourse._uuid).eq("sy_id", offFilterSy).eq("semester", offFilterSemester);
     if (sectionSearch) q = q.ilike("section_label", `%${sectionSearch}%`);
     q = q.order(sectionSort.field, { ascending: sectionSort.dir === "asc" });
 
     const { data: sectData, error } = await q;
     if (!error) {
-      const formattedSections = (sectData || []).map((sec: any) => ({ ...sec, room_name: sec.rooms?.room_name || "Unassigned" }));
+      const formattedSections = (sectData || []).map((sec: any) => ({ ...sec, room_name: sec.rooms?.room_name || "Unassigned", program_code: sec.program?.code || "All" }));
       setSections(formattedSections);
       
       const sectionIds = formattedSections.map((section) => section.section_id);
@@ -348,10 +389,10 @@ export default function AdminCourseManagement({
     const to = from + offPageSize - 1;
 
     let q = supabase.from("course_sections")
-      .select("*, courses!inner(course_code, course_name), rooms(room_name)", { count: "exact" });
+      .select("*, courses!inner(course_code, course_name), rooms(room_name), program(code)", { count: "exact" });
     
     if (offFilterSy) q = q.eq("sy_id", offFilterSy);
-    if (offFilterTerm) q = q.eq("term", offFilterTerm);
+    if (offFilterSemester) q = q.eq("semester", offFilterSemester);
     if (offFilterCourse) q = q.eq("course_id", offFilterCourse);
     if (offeringSearch) q = q.ilike("courses.course_code", `%${offeringSearch}%`);
 
@@ -372,7 +413,8 @@ export default function AdminCourseManagement({
         course_code: s.courses?.course_code,
         course_name: s.courses?.course_name,
         enrolled_count: counts[s.section_id] || 0,
-        room_name: s.rooms?.room_name || "Unassigned"
+        room_name: s.rooms?.room_name || "Unassigned",
+        program_code: s.program?.code || "All"
       }));
 
       setOfferings(enriched);
@@ -445,14 +487,14 @@ export default function AdminCourseManagement({
     await loadReferences();
   }
 
-  async function checkScheduleConflict(syId: string, term: string, scheduleLabel: string, teacherId: string | null, roomId: string | null, excludeSectionId?: string): Promise<boolean> {
+  async function checkScheduleConflict(syId: string, semester: string, scheduleLabel: string, teacherId: string | null, roomId: string | null, excludeSectionId?: string): Promise<boolean> {
     if (!scheduleLabel || (!teacherId && !roomId)) return false;
 
     let q = supabase
       .from("course_sections")
       .select("section_id, section_label, teacher_id, room_id, courses!inner(course_code)")
       .eq("sy_id", syId)
-      .eq("term", term)
+      .eq("semester", semester)
       .eq("schedule_label", scheduleLabel);
 
     if (excludeSectionId) q = q.neq("section_id", excludeSectionId);
@@ -470,22 +512,22 @@ export default function AdminCourseManagement({
     return false;
   }
 
-  async function checkStudentConflicts(students: string[], syId: string, term: string, scheduleLabel: string): Promise<string[]> {
+  async function checkStudentConflicts(students: string[], syId: string, semester: string, scheduleLabel: string): Promise<string[]> {
     if (!scheduleLabel) return [];
     
     const { data, error } = await supabase.from("student_course_assignments")
-      .select("student_id, course_sections!inner(schedule_label, sy_id, term)")
+      .select("student_id, course_sections!inner(schedule_label, sy_id, semester)")
       .in("student_id", students)
       .eq("course_sections.sy_id", syId)
-      .eq("course_sections.term", term)
+      .eq("course_sections.semester", semester)
       .eq("course_sections.schedule_label", scheduleLabel);
 
     if (error || !data) return [];
     return data.map((d: any) => d.student_id);
   }
 
-  function downloadCSVTemplate(type: "courses" | "sections" | "mappings" | "rooms") {
-    const content = CSV_TEMPLATES[type];
+  function downloadCSVTemplate(type: "courses" | "sections" | "mappings" | "rooms" | "students_to_section" | "global_enrollment") {
+    const content = CSV_TEMPLATES[type as keyof typeof CSV_TEMPLATES];
     const blob = new Blob([content], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -507,6 +549,66 @@ export default function AdminCourseManagement({
     a.click();
   }
 
+  async function handleStudentCSVImport(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file || !selSection || !selCourse) return;
+    
+    setLoading(true);
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      const text = event.target?.result as string;
+      const csvRows = text.split("\n").map(r => r.split(","));
+      
+      const importedIds = [];
+      for (let i = 1; i < csvRows.length; i++) {
+        if (csvRows[i][0]) importedIds.push(csvRows[i][0].trim());
+      }
+
+      if (importedIds.length === 0) {
+        showToast("CSV is empty or improperly formatted.", "warning");
+        setLoading(false);
+        return;
+      }
+
+      const { data: matchedStudents } = await supabase.from("users")
+        .select("user_id, display_id")
+        .in("display_id", importedIds)
+        .eq("role", "student");
+
+      if (!matchedStudents || matchedStudents.length === 0) {
+        showToast("No matching students found.", "error");
+        setLoading(false);
+        return;
+      }
+
+      const validUuids = matchedStudents.map(s => s.user_id);
+      
+      let toEnroll = validUuids;
+      if (!forceEnroll) {
+        const conflictedIds = await checkStudentConflicts(validUuids, selSection.sy_id, selSection.semester, selSection.schedule_label);
+        if (conflictedIds.length > 0) {
+          showToast(`${conflictedIds.length} student(s) skipped due to schedule conflicts.`, "warning");
+          toEnroll = validUuids.filter(id => !conflictedIds.includes(id));
+        }
+      }
+
+      let enrolledCount = 0, waitlistedCount = 0;
+      for (const studentId of toEnroll) {
+        const status = await enrollStudent(studentId, selCourse._uuid, selSection.section_id);
+        if (status === "Enrolled" || forceEnroll) enrolledCount++;
+        if (status === "Waitlisted" && !forceEnroll) waitlistedCount++;
+      }
+      
+      await loadCatalogSectionsAPI();
+      if (waitlistedCount > 0) showToast(`${enrolledCount} enrolled, ${waitlistedCount} waitlisted due to capacity.`, "warning");
+      else showToast(`${enrolledCount} students successfully enrolled.`, "success");
+      
+      setLoading(false);
+    };
+    reader.readAsText(file);
+    if (studentCsvRef.current) studentCsvRef.current.value = "";
+  }
+
   async function handleCSVImport(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file || !importType) return;
@@ -518,7 +620,38 @@ export default function AdminCourseManagement({
       const csvRows = text.split("\n").map(r => r.split(","));
       
       try {
-        if (importType === "courses") {
+        if (importType === "global_enrollments") {
+          const validRows = csvRows.slice(1).filter(r => r.length >= 3 && r[0].trim() && r[1].trim() && r[2].trim());
+          if (validRows.length === 0) throw new Error("CSV is empty or missing required columns.");
+
+          const displayIds = Array.from(new Set(validRows.map(r => r[0].trim())));
+          const { data: usersData } = await supabase.from("users").select("user_id, display_id").in("display_id", displayIds).eq("role", "student");
+          const userDict = (usersData || []).reduce((acc: any, u: any) => { acc[u.display_id] = u.user_id; return acc; }, {});
+
+          const courseCodes = Array.from(new Set(validRows.map(r => r[1].trim().toUpperCase())));
+          const { data: sectionData } = await supabase.from("course_sections").select("section_id, section_label, course_id, courses!inner(course_code)").eq("sy_id", offFilterSy).eq("semester", offFilterSemester).in("courses.course_code", courseCodes);
+          const sectionDict = (sectionData || []).reduce((acc: any, s: any) => { 
+            const key = `${s.courses?.course_code}_${s.section_label}`.toUpperCase();
+            acc[key] = { section_id: s.section_id, course_id: s.course_id }; 
+            return acc; 
+          }, {});
+
+          let successCount = 0;
+          for (const row of validRows) {
+            const uId = userDict[row[0].trim()];
+            const sKey = `${row[1].trim()}_${row[2].trim()}`.toUpperCase();
+            const sData = sectionDict[sKey];
+
+            if (uId && sData) {
+              await enrollStudent(uId, sData.course_id, sData.section_id);
+              successCount++;
+            }
+          }
+          showToast(`Successfully processed ${successCount} global enrollments.`, "success");
+          if (mainTab === "offerings") void loadOfferingsAPI();
+        }
+
+        else if (importType === "courses") {
           const newCourses = [];
           const prereqMap: Record<string, string[]> = {};
           
@@ -598,25 +731,30 @@ export default function AdminCourseManagement({
         else if (importType === "sections") {
           const courseDict = allCourses.reduce((acc, c) => { acc[c.code] = c._uuid; return acc; }, {});
           const roomDict = rooms.reduce((acc, r) => { acc[r.room_name] = r.room_id; return acc; }, {});
+          const progDict = programs.reduce((acc, p) => { acc[p.code] = p.program_id; return acc; }, {});
           const newSections = [];
           let skipped = 0;
 
           for (let i = 1; i < csvRows.length; i++) {
-            if (csvRows[i].length >= 6 && csvRows[i][0].trim()) {
+            if (csvRows[i].length >= 7 && csvRows[i][0].trim()) {
               const cId = courseDict[csvRows[i][0].trim().toUpperCase()];
-              const term = csvRows[i][2].trim();
-              const schedule = csvRows[i][4].trim();
-              const rId = roomDict[csvRows[i][3].trim()] || null;
+              const semester = csvRows[i][2].trim();
+              const yearLevel = csvRows[i][3].trim();
+              const pId = progDict[csvRows[i][4].trim().toUpperCase()] || null;
+              const rId = roomDict[csvRows[i][5].trim()] || null;
+              const schedule = csvRows[i][6].trim();
               
-              if (cId && offFilterSy && term) {
-                const hasConflict = await checkScheduleConflict(offFilterSy, term, schedule, null, rId);
+              let capValue: number | null = Number(csvRows[i][7]?.trim());
+              if (isNaN(capValue) || csvRows[i][7]?.trim().toLowerCase() === "unlimited") capValue = null;
+
+              if (cId && offFilterSy && semester) {
+                const hasConflict = await checkScheduleConflict(offFilterSy, semester, schedule, null, rId);
                 if (hasConflict) { skipped++; continue; }
                 
-                let capValue: number | null = Number(csvRows[i][5].trim());
-                if (isNaN(capValue) || csvRows[i][5].trim().toLowerCase() === "unlimited") capValue = null;
-
                 newSections.push({
-                  course_id: cId, section_label: csvRows[i][1].trim(), term, room_id: rId,
+                  course_id: cId, section_label: csvRows[i][1].trim(), semester, room_id: rId,
+                  year_level: yearLevel || "1st Year",
+                  program_id: pId,
                   schedule_label: schedule, max_capacity: capValue,
                   sy_id: offFilterSy
                 });
@@ -671,11 +809,11 @@ export default function AdminCourseManagement({
   }
 
   async function handleCreateSection() {
-    if (!sectionForm.courseId || !sectionForm.syId || !sectionForm.term || !sectionForm.sectionLabel) {
-      showToast("Course, SY, Term, and Label are required.", "error"); return;
+    if (!sectionForm.courseId || !sectionForm.syId || !sectionForm.semester || !sectionForm.sectionLabel) {
+      showToast("Course, SY, Semester, and Label are required.", "error"); return;
     }
 
-    const hasConflict = await checkScheduleConflict(sectionForm.syId, sectionForm.term, sectionForm.scheduleLabel, sectionForm.teacherId || null, sectionForm.roomId || null);
+    const hasConflict = await checkScheduleConflict(sectionForm.syId, sectionForm.semester, sectionForm.scheduleLabel, sectionForm.teacherId || null, sectionForm.roomId || null);
     if (hasConflict) return;
 
     const { error } = await supabase.from("course_sections").insert({
@@ -686,8 +824,9 @@ export default function AdminCourseManagement({
       section_label: sectionForm.sectionLabel, 
       sy_id: sectionForm.syId, 
       teacher_id: sectionForm.teacherId || null,
-      term: sectionForm.term,
-      year_level: sectionForm.yearLevel
+      semester: sectionForm.semester,
+      year_level: sectionForm.yearLevel,
+      program_id: sectionForm.programId || null
     });
 
     if (error) { showToast(error.message, "error"); return; }
@@ -703,7 +842,7 @@ export default function AdminCourseManagement({
     if (!selSection?._uuid && !selSection?.section_id) return;
     const targetId = selSection._uuid || selSection.section_id;
 
-    const hasConflict = await checkScheduleConflict(sectionForm.syId, sectionForm.term, sectionForm.scheduleLabel, sectionForm.teacherId || null, sectionForm.roomId || null, targetId);
+    const hasConflict = await checkScheduleConflict(sectionForm.syId, sectionForm.semester, sectionForm.scheduleLabel, sectionForm.teacherId || null, sectionForm.roomId || null, targetId);
     if (hasConflict) return;
 
     const { error } = await supabase.from("course_sections").update({
@@ -711,7 +850,8 @@ export default function AdminCourseManagement({
       room_id: sectionForm.roomId || null,
       schedule_label: sectionForm.scheduleLabel || null,
       teacher_id: sectionForm.teacherId || null,
-      year_level: sectionForm.yearLevel
+      year_level: sectionForm.yearLevel,
+      program_id: sectionForm.programId || null
     }).eq("section_id", targetId);
 
     if (error) { showToast(error.message, "error"); return; }
@@ -775,6 +915,26 @@ export default function AdminCourseManagement({
     await loadReferences();
   }
 
+  async function handleCreateSchedule() {
+    const daysStr = newSchedDays.join("");
+    if (!daysStr || !newSchedStart || !newSchedEnd) { showToast("Days, Start Time, and End Time are required.", "error"); return; }
+    const label = `${daysStr} ${newSchedStart} - ${newSchedEnd}`;
+    const { error } = await supabase.from("schedules").insert({ schedule_label: label });
+    if (error) { showToast(error.message, "error"); return; }
+    showToast("Schedule added.", "success");
+    setNewSchedDays([]);
+    setNewSchedStart("");
+    setNewSchedEnd("");
+    await loadReferences();
+  }
+
+  async function handleDeleteSchedule(id: string) {
+    const { error } = await supabase.from("schedules").delete().eq("id", id);
+    if (error) { showToast("Error deleting schedule.", "error"); return; }
+    showToast("Schedule deleted.", "success");
+    await loadReferences();
+  }
+
   async function handleAddPrerequisite() {
     if (!selCourse || !prereqFormCourseId) return;
     const { error } = await supabase.from("course_prerequisites").insert({
@@ -801,9 +961,9 @@ export default function AdminCourseManagement({
     setLoading(true);
     const { data, error } = await supabase.rpc("rollover_sections", {
       p_source_sy_id: rolloverForm.sourceSyId,
-      p_source_term: rolloverForm.sourceTerm,
+      p_source_term: rolloverForm.sourceSemester,
       p_target_sy_id: rolloverForm.targetSyId,
-      p_target_term: rolloverForm.targetTerm
+      p_target_term: rolloverForm.targetSemester
     });
     setLoading(false);
     if (error) { showToast(error.message, "error"); return; }
@@ -875,7 +1035,7 @@ export default function AdminCourseManagement({
     let toEnroll = selStudents;
     
     if (!forceEnroll) {
-      const conflictedIds = await checkStudentConflicts(selStudents, selSection.sy_id, selSection.term, selSection.schedule_label);
+      const conflictedIds = await checkStudentConflicts(selStudents, selSection.sy_id, selSection.semester, selSection.schedule_label);
       if (conflictedIds.length > 0) {
         showToast(`${conflictedIds.length} student(s) skipped due to schedule conflicts. Check 'Force Enroll' to bypass.`, "warning");
         toEnroll = selStudents.filter(id => !conflictedIds.includes(id));
@@ -897,6 +1057,27 @@ export default function AdminCourseManagement({
     await loadCatalogSectionsAPI();
     if (waitlistedCount > 0) showToast(`${enrolledCount} enrolled, ${waitlistedCount} waitlisted due to capacity.`, "warning");
     else showToast(`${enrolledCount} students enrolled.`, "success");
+  }
+
+  async function executeManualMultiEnroll() {
+    if (!manualEnrollStudentId || manualEnrollSections.length === 0) return;
+    setLoading(true);
+
+    let successCount = 0;
+    for (const sectionId of manualEnrollSections) {
+      const secData = offerings.find(o => o.section_id === sectionId);
+      if (secData) {
+        await enrollStudent(manualEnrollStudentId, secData.course_id, sectionId);
+        successCount++;
+      }
+    }
+
+    showToast(`Processed ${successCount} enrollments for student.`, "success");
+    setManualEnrollStudentId("");
+    setManualEnrollSections([]);
+    setShowManualEnrollModal(false);
+    if (mainTab === "offerings") void loadOfferingsAPI();
+    setLoading(false);
   }
 
   function handleMainSearchKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
@@ -928,8 +1109,9 @@ export default function AdminCourseManagement({
       scheduleLabel: "",
       syId: offFilterSy,
       teacherId: "",
-      term: offFilterTerm,
-      yearLevel: "1st Year"
+      semester: offFilterSemester,
+      yearLevel: "1st Year",
+      programId: ""
     });
     setTeacherWorkload(null);
     setShowCreateSectionModal(true);
@@ -946,8 +1128,9 @@ export default function AdminCourseManagement({
       sectionLabel: selSection.section_label,
       syId: selSection.sy_id,
       teacherId: selSection.teacher_id || "",
-      term: selSection.term,
-      yearLevel: selSection.year_level || "1st Year"
+      semester: selSection.semester || "1st Semester",
+      yearLevel: selSection.year_level || "1st Year",
+      programId: selSection.program_id || ""
     });
     setTeacherWorkload(null);
     setShowEditSectionModal(true);
@@ -991,6 +1174,25 @@ export default function AdminCourseManagement({
     setter(list.includes(item) ? list.filter((i) => i !== item) : [...list, item]);
   }
 
+  const validProgramIds = useMemo(() => {
+    if (mainTab !== "catalog" || !selCourse) return programs.map(p => p.program_id);
+    const m = mappings.filter(map => map.course_id === selCourse._uuid);
+    if (m.length === 0) return [];
+    return Array.from(new Set(m.map(map => map.program_id)));
+  }, [mappings, selCourse, programs, mainTab]);
+
+  const filteredPrograms = programs.filter(p => validProgramIds.includes(p.program_id));
+
+  const eligibleStudents = useMemo(() => {
+    if (!selSection || !selSection.program_id) return [];
+    return studentsList.filter(s => {
+      if (s.programId !== selSection.program_id) return false;
+      if (selSection.year_level && s.yearLevel !== selSection.year_level) return false;
+      if (studentSearch && !s.fullName.toLowerCase().includes(studentSearch.toLowerCase())) return false;
+      return true;
+    });
+  }, [studentsList, selSection, studentSearch]);
+
   const groupedCurriculum = useMemo(() => {
     if (!selCurriculumProg) return {};
     const filtered = mappings.filter(m => String(m.program_id) === String(selCurriculumProg));
@@ -1003,9 +1205,6 @@ export default function AdminCourseManagement({
     return groups;
   }, [mappings, selCurriculumProg]);
 
-  const teachersList = users.filter((u) => u.role === "teacher");
-  const enrolledStudentIds = new Set(selSection ? sectionEnrollments.filter((e) => e.section_id === selSection.section_id).map((e) => String(e.student_id)) : []);
-  
   const isTermLocked = useMemo(() => {
      return schoolYears.find(sy => sy.sy_id === offFilterSy)?.is_locked || false;
   }, [schoolYears, offFilterSy]);
@@ -1059,6 +1258,7 @@ export default function AdminCourseManagement({
   const sectionCols = [
     { cellRenderer: (_: any, row: any) => <input checked={selSectionsForDelete.includes(row.section_id)} onChange={() => toggleSelection(row.section_id, selSectionsForDelete, setSelSectionsForDelete)} onClick={(e) => e.stopPropagation()} type="checkbox" />, field: "select", header: <input checked={sections.length > 0 && selSectionsForDelete.length === sections.length} onChange={(e) => setSelSectionsForDelete(e.target.checked ? sections.map(s=>s.section_id) : [])} type="checkbox" />, sortable: false, width: 50 },
     { field: "section_label", header: "Section", width: 100, sortable: true },
+    { field: "program_code", header: "Program", width: 120, sortable: true },
     { field: "schedule_label", header: "Schedule", width: 180, sortable: true },
     { field: "room_name", header: "Room", width: 100 },
     { cellRenderer: (_: any, row: any) => <span>{row.max_capacity === null ? "∞" : row.max_capacity}</span>, field: "max_capacity", header: "Capacity", width: 100, sortable: true },
@@ -1069,7 +1269,8 @@ export default function AdminCourseManagement({
     { field: "course_code", header: "Course Code", width: 120, sortable: false },
     { field: "course_name", header: "Course Name", flex: 1, sortable: false },
     { field: "section_label", header: "Section", width: 90, sortable: true },
-    { field: "term", header: "Term", width: 100, sortable: true },
+    { field: "program_code", header: "Program", width: 100, sortable: false },
+    { field: "semester", header: "Semester", width: 100, sortable: true },
     { field: "schedule_label", header: "Schedule", width: 180, sortable: false },
     { field: "room_name", header: "Room", width: 100, sortable: false },
     { cellRenderer: (_: any, row: any) => <span>{row.enrolled_count} / {row.max_capacity === null ? "∞" : (row.max_capacity || 30)}</span>, field: "max_capacity", header: "Capacity", width: 100, sortable: true },
@@ -1174,6 +1375,8 @@ export default function AdminCourseManagement({
           <div style={{ alignItems: "center", display: "flex", flexWrap: "wrap", gap: "8px", marginLeft: "auto" }}>
             <input accept=".csv" onChange={handleCSVImport} ref={fileInputRef} style={{ display: "none" }} type="file" />
 
+            {mainTab === "offerings" && <Btn onClick={() => setShowManualEnrollModal(true)} size="sm" variant="success">Manual Multi-Enroll</Btn>}
+            {mainTab === "offerings" && <Btn onClick={() => { setImportType("global_enrollments"); fileInputRef.current?.click(); }} size="sm" variant="secondary">Global Enroll (CSV)</Btn>}
             {mainTab === "offerings" && <Btn onClick={() => toggleTermLock()} size="sm" variant={isTermLocked ? "primary" : "secondary"}>{isTermLocked ? "Unlock Grades" : "Lock Grades"}</Btn>}
             {mainTab === "offerings" && <Btn onClick={() => downloadCSVTemplate("sections")} size="sm" variant="ghost">Template</Btn>}
             {mainTab === "offerings" && <Btn onClick={() => { setImportType("sections"); fileInputRef.current?.click(); }} size="sm" variant="secondary">Import Sections</Btn>}
@@ -1181,6 +1384,7 @@ export default function AdminCourseManagement({
             {mainTab === "offerings" && <Btn onClick={() => setShowRolloverModal(true)} size="sm" variant="secondary">Term Rollover</Btn>}
             
             <Btn onClick={() => setShowRoomModal(true)} size="sm" variant="ghost">Manage Rooms</Btn>
+            <Btn onClick={() => setShowScheduleModal(true)} size="sm" variant="ghost">Manage Schedules</Btn>
 
             {mainTab === "catalog" && level === "codes" && (
               <>
@@ -1249,12 +1453,12 @@ export default function AdminCourseManagement({
         {mainTab === "catalog" && level === "section" && (
           <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
             <div style={{ background: "#1e293b", borderRight: "1px solid #334155", display: "flex", flexDirection: "column", padding: "16px", width: "350px" }}>
-              <div style={{ color: "#f1f5f9", fontSize: "14px", fontWeight: 800, marginBottom: "16px" }}>Global Enrollment Panel</div>
-              <Input onChange={(e) => setStudentSearch(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void loadStudentsAPI(studentSearch); }} placeholder="Search student + Enter" style={{ marginBottom: "12px" }} value={studentSearch} />
+              <div style={{ color: "#f1f5f9", fontSize: "14px", fontWeight: 800, marginBottom: "16px" }}>Enrollment Panel</div>
+              <Input onChange={(e) => setStudentSearch(e.target.value)} placeholder="Filter eligible students..." style={{ marginBottom: "12px" }} value={studentSearch} />
               
               <div style={{ alignItems: "center", borderBottom: "1px solid #334155", display: "flex", gap: "8px", marginBottom: "8px", paddingBottom: "8px" }}>
-                <input checked={studentsList.length > 0 && selStudents.length === studentsList.length} onChange={(e) => setSelStudents(e.target.checked ? studentsList.map(s=>String(s._uuid)) : [])} type="checkbox" />
-                <span style={{ color: "#94a3b8", fontSize: "12px", fontWeight: 700 }}>Select All Results</span>
+                <input checked={eligibleStudents.length > 0 && selStudents.length === eligibleStudents.length} onChange={(e) => setSelStudents(e.target.checked ? eligibleStudents.map(s=>String(s._uuid)) : [])} type="checkbox" />
+                <span style={{ color: "#94a3b8", fontSize: "12px", fontWeight: 700 }}>Select Eligible Students</span>
                 
                 <label style={{ alignItems: "center", color: "#f87171", cursor: "pointer", display: "flex", fontSize: "11px", fontWeight: 700, gap: "4px", marginLeft: "auto" }}>
                   <input checked={forceEnroll} onChange={(e) => setForceEnroll(e.target.checked)} type="checkbox" /> Force Enroll
@@ -1262,15 +1466,27 @@ export default function AdminCourseManagement({
               </div>
 
               <div style={{ display: "flex", flex: 1, flexDirection: "column", gap: "8px", marginBottom: "16px", overflowY: "auto" }}>
-                {studentsList.map((s) => (
-                  <label key={s._uuid} style={{ alignItems: "center", color: "#e2e8f0", cursor: "pointer", display: "flex", fontSize: "12px", gap: "8px" }}>
-                    <input checked={selStudents.includes(s._uuid)} onChange={(e) => setSelStudents((prev) => e.target.checked ? [...prev, s._uuid] : prev.filter((id) => id !== s._uuid))} type="checkbox" />
-                    {s.fullName}
-                  </label>
-                ))}
-                {studentsList.length === 0 && <div style={{ color: "#64748b", fontSize: "12px", marginTop: "10px", textAlign: "center" }}>Search to find specific students...</div>}
+                {!selSection?.program_id ? (
+                  <div style={{ color: "#fbbf24", fontSize: "12px", textAlign: "center", marginTop: "20px" }}>Assign a Program to this section to auto-load the eligible student block.</div>
+                ) : eligibleStudents.length === 0 ? (
+                  <div style={{ color: "#64748b", fontSize: "12px", textAlign: "center", marginTop: "20px" }}>No eligible students found for this block.</div>
+                ) : (
+                  eligibleStudents.map((s) => (
+                    <label key={s._uuid} style={{ alignItems: "center", color: "#e2e8f0", cursor: "pointer", display: "flex", fontSize: "12px", gap: "8px" }}>
+                      <input checked={selStudents.includes(s._uuid)} onChange={(e) => setSelStudents((prev) => e.target.checked ? [...prev, s._uuid] : prev.filter((id) => id !== s._uuid))} type="checkbox" />
+                      {s.fullName}
+                    </label>
+                  ))
+                )}
               </div>
-              <Btn disabled={isLoading || selStudents.length === 0 || !selSection} onClick={enrollStudents}>{isLoading ? "Processing..." : `Enroll ${selStudents.length} Selected`}</Btn>
+              <div style={{ display: "flex", gap: "8px" }}>
+                <input accept=".csv" onChange={handleStudentCSVImport} ref={studentCsvRef} style={{ display: "none" }} type="file" />
+                <Btn disabled={!selSection} onClick={() => studentCsvRef.current?.click()} variant="secondary" style={{ flex: 1 }}>Bulk Enroll (CSV)</Btn>
+                <Btn disabled={isLoading || selStudents.length === 0 || !selSection} onClick={enrollStudents} style={{ flex: 1 }}>{isLoading ? "Wait..." : `Enroll ${selStudents.length}`}</Btn>
+              </div>
+              <div style={{ textAlign: "center", marginTop: "8px" }}>
+                <a style={{ color: "#6366f1", fontSize: "11px", cursor: "pointer", textDecoration: "underline" }} onClick={() => downloadCSVTemplate("students_to_section")}>Download CSV Template</a>
+              </div>
             </div>
 
             <div style={{ background: "#0f172a", display: "flex", flex: 1, flexDirection: "column" }}>
@@ -1453,8 +1669,8 @@ export default function AdminCourseManagement({
                   <FF label="School Year"><Sel onChange={(e) => setOffFilterSy(e.target.value)} style={{ marginBottom: "12px", width: "100%" }} value={offFilterSy}>
                     {schoolYears.map(s => <option key={s.sy_id} value={s.sy_id}>{s.label}{s.is_active ? " ★ Active" : ""}{s.is_locked ? " 🔒" : ""}</option>)}
                   </Sel></FF>
-                  <FF label="Term"><Sel onChange={(e) => setOffFilterTerm(e.target.value)} style={{ marginBottom: "12px", width: "100%" }} value={offFilterTerm}>
-                    {TERMS.map(t => <option key={t} value={t}>{t}</option>)}
+                  <FF label="Semester"><Sel onChange={(e) => setOffFilterSemester(e.target.value)} style={{ marginBottom: "12px", width: "100%" }} value={offFilterSemester}>
+                    {SEMESTERS.map(t => <option key={t} value={t}>{t}</option>)}
                   </Sel></FF>
                 </>
               )}
@@ -1487,6 +1703,48 @@ export default function AdminCourseManagement({
           </div>
         )}
 
+        {showManualEnrollModal && (
+          <div style={{ alignItems: "center", background: "rgba(0,0,0,0.5)", bottom: 0, display: "flex", justifyContent: "center", left: 0, position: "fixed", right: 0, top: 0, zIndex: 1000 }}>
+            <div style={{ background: "#1e293b", borderRadius: "8px", display: "flex", flexDirection: "column", maxHeight: "90vh", padding: "24px", width: "700px" }}>
+              <h3 style={{ color: "#f1f5f9", margin: "0 0 16px 0" }}>Manual Student Multi-Enrollment</h3>
+              
+              <div style={{ background: "#0f172a", border: "1px solid #334155", borderRadius: "8px", marginBottom: "16px", padding: "16px" }}>
+                <div style={{ color: "#94a3b8", fontSize: "12px", fontWeight: 700, marginBottom: "8px" }}>STEP 1: Select Student</div>
+                <div style={{ display: "flex", gap: "8px" }}>
+                  <Input onChange={(e) => setManualEnrollSearch(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void loadStudentsAPI(manualEnrollSearch); }} placeholder="Search student name + Enter..." style={{ flex: 1 }} value={manualEnrollSearch} />
+                </div>
+                {studentsList.length > 0 && (
+                  <Sel onChange={(e) => setManualEnrollStudentId(e.target.value)} style={{ marginTop: "8px", width: "100%" }} value={manualEnrollStudentId}>
+                    <option value="">— Select a student —</option>
+                    {studentsList.map(s => <option key={s._uuid} value={s._uuid}>{s.fullName} ({programs.find(p => p.program_id === s.programId)?.code || "No Program"})</option>)}
+                  </Sel>
+                )}
+              </div>
+
+              <div style={{ background: "#0f172a", border: "1px solid #334155", borderRadius: "8px", display: "flex", flex: 1, flexDirection: "column", minHeight: "300px", padding: "16px" }}>
+                <div style={{ color: "#94a3b8", fontSize: "12px", fontWeight: 700, marginBottom: "8px" }}>STEP 2: Select Sections ({offFilterSy ? schoolYears.find(s => s.sy_id === offFilterSy)?.label : ""} - {offFilterSemester})</div>
+                <div style={{ flex: 1, overflowY: "auto" }}>
+                   {offerings.map(sec => (
+                     <label key={sec.section_id} style={{ alignItems: "center", borderBottom: "1px solid #1e293b", cursor: "pointer", display: "flex", gap: "10px", padding: "8px 0" }}>
+                        <input checked={manualEnrollSections.includes(sec.section_id)} onChange={(e) => setManualEnrollSections(prev => e.target.checked ? [...prev, sec.section_id] : prev.filter(id => id !== sec.section_id))} type="checkbox" />
+                        <div style={{ flex: 1 }}>
+                          <div style={{ color: "#f1f5f9", fontSize: "13px", fontWeight: 700 }}>{sec.course_code} - Section {sec.section_label}</div>
+                          <div style={{ color: "#64748b", fontSize: "11px" }}>{sec.schedule_label} | {sec.room_name} | {sec.enrolled_count}/{sec.max_capacity === null ? "∞" : sec.max_capacity}</div>
+                        </div>
+                     </label>
+                   ))}
+                   {offerings.length === 0 && <div style={{ color: "#64748b", fontSize: "12px", textAlign: "center" }}>No offerings found. Adjust your filters.</div>}
+                </div>
+              </div>
+
+              <div style={{ display: "flex", gap: "8px", justifyContent: "flex-end", marginTop: "16px" }}>
+                <Btn onClick={() => { setShowManualEnrollModal(false); setManualEnrollSections([]); }} variant="secondary">Cancel</Btn>
+                <Btn disabled={loading || !manualEnrollStudentId || manualEnrollSections.length === 0} onClick={executeManualMultiEnroll}>{loading ? "Processing..." : `Enroll in ${manualEnrollSections.length} Sections`}</Btn>
+              </div>
+            </div>
+          </div>
+        )}
+
         {showOfferingDetailsModal && viewOfferingSection && (
           <div style={{ alignItems: "center", background: "rgba(0,0,0,0.5)", bottom: 0, display: "flex", justifyContent: "center", left: 0, position: "fixed", right: 0, top: 0, zIndex: 1000 }}>
             <div style={{ background: "#1e293b", borderRadius: "8px", display: "flex", flexDirection: "column", maxHeight: "85vh", padding: "24px", width: "800px" }}>
@@ -1497,7 +1755,7 @@ export default function AdminCourseManagement({
                 <div><span style={{ color: "#64748b", fontSize: "12px" }}>Teacher:</span> <span style={{ color: "#f1f5f9", fontSize: "13px", fontWeight: 700 }}>{users.find(u => String(u._uuid) === String(viewOfferingSection.teacher_id))?.fullName || "Unassigned"}</span></div>
                 <div><span style={{ color: "#64748b", fontSize: "12px" }}>Schedule:</span> <span style={{ color: "#f1f5f9", fontSize: "13px", fontWeight: 700 }}>{viewOfferingSection.schedule_label}</span></div>
                 <div><span style={{ color: "#64748b", fontSize: "12px" }}>Room:</span> <span style={{ color: "#f1f5f9", fontSize: "13px", fontWeight: 700 }}>{viewOfferingSection.room_name}</span></div>
-                <div><span style={{ color: "#64748b", fontSize: "12px" }}>Capacity:</span> <span style={{ color: "#f1f5f9", fontSize: "13px", fontWeight: 700 }}>{viewOfferingSection.enrolled_count} / {viewOfferingSection.max_capacity}</span></div>
+                <div><span style={{ color: "#64748b", fontSize: "12px" }}>Capacity:</span> <span style={{ color: "#f1f5f9", fontSize: "13px", fontWeight: 700 }}>{viewOfferingSection.enrolled_count} / {viewOfferingSection.max_capacity === null ? "∞" : viewOfferingSection.max_capacity}</span></div>
               </div>
               
               <div style={{ display: "flex", gap: "10px", marginBottom: "12px" }}>
@@ -1568,6 +1826,44 @@ export default function AdminCourseManagement({
                  {rooms.length === 0 && <div style={{ color: "#64748b", fontSize: "13px", padding: "20px", textAlign: "center" }}>No rooms added yet.</div>}
               </div>
               <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "16px" }}><Btn onClick={() => setShowRoomModal(false)} variant="secondary">Close</Btn></div>
+            </div>
+          </div>
+        )}
+
+        {showScheduleModal && (
+          <div style={{ alignItems: "center", background: "rgba(0,0,0,0.5)", bottom: 0, display: "flex", justifyContent: "center", left: 0, position: "fixed", right: 0, top: 0, zIndex: 1000 }}>
+            <div style={{ background: "#1e293b", borderRadius: "8px", padding: "24px", width: "500px" }}>
+              <h3 style={{ color: "#f1f5f9", margin: "0 0 16px 0" }}>Manage Schedules</h3>
+              <div style={{ display: "flex", gap: "8px", marginBottom: "16px" }}>
+                 {DAYS_OF_WEEK.map(d => (
+                   <label key={d.value} style={{ alignItems: "center", background: newSchedDays.includes(d.value) ? "#4f46e5" : "#0f172a", border: "1px solid #334155", borderRadius: "4px", color: "#f1f5f9", cursor: "pointer", display: "flex", fontSize: "12px", justifyContent: "center", padding: "6px 8px", width: "35px" }}>
+                     <input checked={newSchedDays.includes(d.value)} onChange={(e) => setNewSchedDays(prev => e.target.checked ? [...prev, d.value] : prev.filter(x => x !== d.value))} style={{ display: "none" }} type="checkbox" />
+                     {d.label}
+                   </label>
+                 ))}
+              </div>
+              <div style={{ display: "flex", gap: "8px", marginBottom: "16px" }}>
+                 <div style={{ flex: 1 }}>
+                   <Input list="start-times" onChange={(e) => setNewSchedStart(e.target.value)} placeholder="Start Time" style={{ width: "100%" }} value={newSchedStart} />
+                   <datalist id="start-times">{TIME_SLOTS.map(t => <option key={t} value={t} />)}</datalist>
+                 </div>
+                 <div style={{ alignSelf: "center", color: "#94a3b8" }}>to</div>
+                 <div style={{ flex: 1 }}>
+                   <Input list="end-times" onChange={(e) => setNewSchedEnd(e.target.value)} placeholder="End Time" style={{ width: "100%" }} value={newSchedEnd} />
+                   <datalist id="end-times">{TIME_SLOTS.map(t => <option key={t} value={t} />)}</datalist>
+                 </div>
+                 <Btn onClick={handleCreateSchedule}>Save</Btn>
+              </div>
+              <div style={{ background: "#0f172a", border: "1px solid #334155", borderRadius: "8px", maxHeight: "300px", overflowY: "auto" }}>
+                 {schedules.map(s => (
+                    <div key={s.id} style={{ borderBottom: "1px solid #1e293b", color: "#e2e8f0", display: "flex", fontSize: "13px", justifyContent: "space-between", padding: "10px" }}>
+                       <span>{s.schedule_label}</span>
+                       <button onClick={() => handleDeleteSchedule(s.id)} style={{ background: "none", border: "none", color: "#f87171", cursor: "pointer" }}>✕</button>
+                    </div>
+                 ))}
+                 {schedules.length === 0 && <div style={{ color: "#64748b", fontSize: "13px", padding: "20px", textAlign: "center" }}>No schedules added yet.</div>}
+              </div>
+              <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "16px" }}><Btn onClick={() => setShowScheduleModal(false)} variant="secondary">Close</Btn></div>
             </div>
           </div>
         )}
@@ -1681,8 +1977,8 @@ export default function AdminCourseManagement({
                       <option value="">— Source SY —</option>
                       {schoolYears.map(s => <option key={s.sy_id} value={s.sy_id}>{s.label}</option>)}
                   </Sel></FF>
-                  <FF label="Term"><Sel onChange={(e) => setRolloverForm({...rolloverForm, sourceTerm: e.target.value})} style={{ width: "100%" }} value={rolloverForm.sourceTerm}>
-                      {TERMS.map(t => <option key={t} value={t}>{t}</option>)}
+                  <FF label="Semester"><Sel onChange={(e) => setRolloverForm({...rolloverForm, sourceSemester: e.target.value})} style={{ width: "100%" }} value={rolloverForm.sourceSemester}>
+                      {SEMESTERS.map(t => <option key={t} value={t}>{t}</option>)}
                   </Sel></FF>
                 </div>
               </div>
@@ -1694,8 +1990,8 @@ export default function AdminCourseManagement({
                       <option value="">— Target SY —</option>
                       {schoolYears.map(s => <option key={s.sy_id} value={s.sy_id}>{s.label}</option>)}
                   </Sel></FF>
-                  <FF label="Term"><Sel onChange={(e) => setRolloverForm({...rolloverForm, targetTerm: e.target.value})} style={{ width: "100%" }} value={rolloverForm.targetTerm}>
-                      {TERMS.map(t => <option key={t} value={t}>{t}</option>)}
+                  <FF label="Semester"><Sel onChange={(e) => setRolloverForm({...rolloverForm, targetSemester: e.target.value})} style={{ width: "100%" }} value={rolloverForm.targetSemester}>
+                      {SEMESTERS.map(t => <option key={t} value={t}>{t}</option>)}
                   </Sel></FF>
                 </div>
               </div>
@@ -1742,13 +2038,31 @@ export default function AdminCourseManagement({
               )}
 
               <div style={{ display: "grid", gap: "10px", gridTemplateColumns: "1fr 1fr", marginBottom: "12px" }}>
-                 <Sel disabled={showEditSectionModal} onChange={(e) => setSectionForm({...sectionForm, syId: e.target.value})} style={{ opacity: showEditSectionModal ? 0.6 : 1, width: "100%" }} value={sectionForm.syId}>
-                    <option value="">— Select SY —</option>
-                    {schoolYears.map(s => <option key={s.sy_id} value={s.sy_id}>{s.label}</option>)}
-                 </Sel>
-                 <Sel disabled={showEditSectionModal} onChange={(e) => setSectionForm({...sectionForm, term: e.target.value})} style={{ opacity: showEditSectionModal ? 0.6 : 1, width: "100%" }} value={sectionForm.term}>
-                    {TERMS.map(t => <option key={t} value={t}>{t}</option>)}
-                 </Sel>
+                 <FF label="Program">
+                   <Sel onChange={(e) => setSectionForm({...sectionForm, programId: e.target.value})} style={{ width: "100%" }} value={sectionForm.programId}>
+                      <option value="">— Mapped Programs —</option>
+                      {filteredPrograms.map(p => <option key={p.program_id} value={p.program_id}>{p.code}</option>)}
+                   </Sel>
+                 </FF>
+                 <FF label="Year Level">
+                   <Sel onChange={(e) => setSectionForm({...sectionForm, yearLevel: e.target.value})} style={{ width: "100%" }} value={sectionForm.yearLevel}>
+                      {YEAR_LEVELS.map(y => <option key={y} value={y}>{y}</option>)}
+                   </Sel>
+                 </FF>
+              </div>
+
+              <div style={{ display: "grid", gap: "10px", gridTemplateColumns: "1fr 1fr", marginBottom: "12px" }}>
+                 <FF label="School Year">
+                   <Sel disabled={showEditSectionModal} onChange={(e) => setSectionForm({...sectionForm, syId: e.target.value})} style={{ opacity: showEditSectionModal ? 0.6 : 1, width: "100%" }} value={sectionForm.syId}>
+                      <option value="">— Select SY —</option>
+                      {schoolYears.map(s => <option key={s.sy_id} value={s.sy_id}>{s.label}</option>)}
+                   </Sel>
+                 </FF>
+                 <FF label="Semester">
+                   <Sel disabled={showEditSectionModal} onChange={(e) => setSectionForm({...sectionForm, semester: e.target.value})} style={{ opacity: showEditSectionModal ? 0.6 : 1, width: "100%" }} value={sectionForm.semester}>
+                      {SEMESTERS.map(t => <option key={t} value={t}>{t}</option>)}
+                   </Sel>
+                 </FF>
               </div>
 
               <div style={{ display: "flex", gap: "10px", marginBottom: "12px" }}>
@@ -1770,9 +2084,9 @@ export default function AdminCourseManagement({
               </Sel>
 
               <div style={{ marginBottom: "12px" }}>
-                <Input list="schedule-options" onChange={(e) => setSectionForm({...sectionForm, scheduleLabel: e.target.value})} placeholder="Schedule (e.g. MWF 7-8AM)" style={{ width: "100%" }} value={sectionForm.scheduleLabel} />
+                <Input list="schedule-options" onChange={(e) => setSectionForm({...sectionForm, scheduleLabel: e.target.value})} placeholder="Schedule (e.g. MWF 7:30 AM - 9:00 AM)" style={{ width: "100%" }} value={sectionForm.scheduleLabel} />
                 <datalist id="schedule-options">
-                  {SCHEDULE_BLOCKS.map(block => <option key={block} value={block} />)}
+                  {schedules.map(s => <option key={s.id} value={s.schedule_label} />)}
                 </datalist>
               </div>
 
