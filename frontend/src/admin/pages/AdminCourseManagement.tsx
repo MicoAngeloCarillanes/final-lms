@@ -23,6 +23,97 @@ interface SortState {
   dir: "asc" | "desc";
 }
 
+const SearchableSelect = ({ options, value, onChange, placeholder, emptyMessage, onAdd, disabled = false }: any) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const filteredOptions = options.filter((o: any) => o.label.toLowerCase().includes(search.toLowerCase()));
+  const selectedOption = options.find((o: any) => String(o.value) === String(value));
+  const isEmpty = options.length === 0;
+
+  return (
+    <div style={{ alignItems: "center", display: "flex", gap: "8px", width: "100%" }}>
+      <div ref={containerRef} style={{ flex: 1, position: "relative" }}>
+        <div
+          onClick={() => { if (!isEmpty && !disabled) setIsOpen(!isOpen); }}
+          style={{
+            alignItems: "center",
+            background: disabled ? "#1e293b" : "#0f172a",
+            border: "1px solid #334155",
+            borderRadius: "6px",
+            color: isEmpty || disabled ? "#64748b" : "#f1f5f9",
+            cursor: isEmpty || disabled ? "not-allowed" : "pointer",
+            display: "flex",
+            fontSize: "13px",
+            height: "38px",
+            justifyContent: "space-between",
+            padding: "8px 12px"
+          }}
+        >
+          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {isEmpty ? emptyMessage : (selectedOption ? selectedOption.label : placeholder)}
+          </span>
+          <span style={{ color: "#64748b", fontSize: "10px" }}>▼</span>
+        </div>
+
+        {isOpen && !isEmpty && !disabled && (
+          <div style={{
+            background: "#1e293b", border: "1px solid #334155", borderRadius: "6px", boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.1)",
+            display: "flex", flexDirection: "column", left: 0, maxHeight: "250px", marginTop: "4px", position: "absolute", right: 0, top: "100%", zIndex: 9999
+          }}>
+            <div style={{ borderBottom: "1px solid #334155", padding: "8px" }}>
+              <input
+                autoFocus
+                onChange={(e) => setSearch(e.target.value)}
+                onClick={(e) => e.stopPropagation()}
+                placeholder="Search..."
+                style={{ background: "#0f172a", border: "1px solid #334155", borderRadius: "4px", color: "#f1f5f9", fontSize: "13px", outline: "none", padding: "6px 8px", width: "100%" }}
+                value={search}
+              />
+            </div>
+            <div style={{ flex: 1, overflowY: "auto", padding: "4px 0" }}>
+              {filteredOptions.length > 0 ? filteredOptions.map((o: any) => (
+                <div
+                  key={o.value}
+                  onClick={() => { onChange(o.value); setIsOpen(false); setSearch(""); }}
+                  onMouseEnter={(e) => e.currentTarget.style.background = "#334155"}
+                  onMouseLeave={(e) => e.currentTarget.style.background = String(value) === String(o.value) ? "#334155" : "transparent"}
+                  style={{ background: String(value) === String(o.value) ? "#334155" : "transparent", color: "#e2e8f0", cursor: "pointer", fontSize: "13px", padding: "8px 12px" }}
+                >
+                  {o.label}
+                </div>
+              )) : (
+                <div style={{ color: "#64748b", fontSize: "13px", padding: "8px 12px" }}>No matches found</div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+      {onAdd && (
+        <button
+          onClick={onAdd}
+          style={{ alignItems: "center", background: "#3b82f6", border: "none", borderRadius: "6px", color: "white", cursor: "pointer", display: "flex", flexShrink: 0, fontSize: "18px", fontWeight: "bold", height: "38px", justifyContent: "center", width: "38px" }}
+          title="Add New"
+          type="button"
+        >
+          +
+        </button>
+      )}
+    </div>
+  );
+};
+
 const SEMESTERS = ["1st Semester", "2nd Semester", "Summer"];
 const YEAR_LEVELS = ["1st Year", "2nd Year", "3rd Year", "4th Year", "5th Year"];
 
@@ -44,12 +135,12 @@ const TIME_SLOTS = [
 ];
 
 const CSV_TEMPLATES = {
-  courses: "Course Code,Course Name,Total Units,Prerequisite Codes (comma separated)\nCS101-LEC,Intro to Computing (Lec),2,\nCS101-LAB,Intro to Computing (Lab),1,CS101-LEC",
-  sections: "Course Code,Section Label,Semester,Year Level,Program Code,Room Name,Schedule Label,Max Capacity,Teacher Display ID\nCS101-LEC,A,1st Semester,1st Year,BSCS,Rm 201,MWF 7:30 AM - 8:30 AM,40,TCH001",
-  mappings: "Course Code,Program Code,Year Level,Semester\nCS101-LEC,BSCS,1st Year,1st Semester",
+  courses: "Course Code,Course Name,Units,Lec Hours,Lab Hours,Prerequisite Codes (comma separated)\nCS101LEC,Intro to Computing (Lec),2,\nCS101LAB,Intro to Computing (Lab),1,CS101LEC",
+  sections: "Course Code,Section Label,Semester,Year Level,Program Code,Room Name,Schedule Label,Max Capacity,Teacher Display ID\nCS101LEC,A,1st Semester,1st Year,BSCS,Rm 201,MWF 7:30 AM - 8:30 AM,40,TCH001",
+  mappings: "Course Code,Program Code,Year Level,Semester\nCS101LEC,BSCS,1st Year,1st Semester",
   rooms: "Room Name,Capacity\nRm 201,40\nLab 1,30",
   students_to_section: "Student ID\nSTU23-00001\nSTU23-00002",
-  global_enrollment: "Student ID,Course Code,Section Label\nSTU23-00001,CS101-LEC,A\nSTU23-00001,CS101-LAB,A"
+  global_enrollment: "Student ID,Course Code,Section Label\nSTU23-00001,CS101LEC,A\nSTU23-00001,CS101LAB,A"
 };
 
 export default function AdminCourseManagement({
@@ -92,6 +183,8 @@ export default function AdminCourseManagement({
 
   const [mapFilterCourse, setMapFilterCourse] = useState("");
   const [mapFilterProg, setMapFilterProg] = useState("");
+  const [mapFilterYear, setMapFilterYear] = useState("");
+  const [mapFilterSemester, setMapFilterSemester] = useState("");
   const [mappings, setMappings] = useState<any[]>([]);
 
   const [selCurriculumProg, setSelCurriculumProg] = useState("");
@@ -102,6 +195,8 @@ export default function AdminCourseManagement({
   const [selMappingsForDelete, setSelMappingsForDelete] = useState<number[]>([]);
   const [selSectionsForDelete, setSelSectionsForDelete] = useState<string[]>([]);
   const [selStudents, setSelStudents] = useState<string[]>([]);
+  const [selEnrolledForDelete, setSelEnrolledForDelete] = useState<string[]>([]);
+  const [forceEnroll, setForceEnroll] = useState(false);
 
   const [codeSearch, setCodeSearch] = useState("");
   const [courseSearch, setCourseSearch] = useState("");
@@ -121,7 +216,7 @@ export default function AdminCourseManagement({
   const [offSort, setOffSort] = useState<SortState>({ field: "created_at", dir: "desc" });
   const [mapSort, setMapSort] = useState<SortState>({ field: "id", dir: "desc" });
 
-  const [courseForm, setCourseForm] = useState<{code: string, name: string, units: number, prereqs: string[]}>({ code: "", name: "", units: 3, prereqs: [] });
+  const [courseForm, setCourseForm] = useState<{code: string, name: string, units: number, types: string[], lecUnits: number, labUnits: number, prereqs: string[]}>({ code: "", name: "", units: 3, types: [], lecUnits: 2, labUnits: 1, prereqs: [] });
   const [mappingForm, setMappingForm] = useState({ courseId: "", programId: "", yearLevel: "1st Year", semester: "1st Semester" });
   const [newRoomForm, setNewRoomForm] = useState({ name: "", capacity: 40 });
   const [newSchedDays, setNewSchedDays] = useState<string[]>([]);
@@ -141,9 +236,9 @@ export default function AdminCourseManagement({
   const [showManualEnrollModal, setShowManualEnrollModal] = useState(false);
   const [manualEnrollStudentId, setManualEnrollStudentId] = useState<string>("");
   const [manualEnrollSections, setManualEnrollSections] = useState<string[]>([]);
-  const [manualEnrollSearch, setManualEnrollSearch] = useState("");
 
   const [conflictModal, setConflictModal] = useState<{show: boolean, validIds: string[], conflicted: any[], forceIds: string[], courseId: string, sectionId: string}>({ show: false, validIds: [], conflicted: [], forceIds: [], courseId: "", sectionId: "" });
+  const [confirmDialog, setConfirmDialog] = useState<{isOpen: boolean, title: string, message: string, onConfirm: () => void}>({ isOpen: false, title: "", message: "", onConfirm: () => {} });
 
   const [loading, setLoading] = useState(false);
   const [newCodePrefix, setNewCodePrefix] = useState("");
@@ -166,6 +261,12 @@ export default function AdminCourseManagement({
     void loadAllCourses();
     void loadStudentsAPI("");
   }, []);
+
+  useEffect(() => {
+    if (showRoomModal || showScheduleModal || showMappingModal) {
+      void loadReferences();
+    }
+  }, [showRoomModal, showScheduleModal, showMappingModal]);
 
   useEffect(() => {
     if (mainTab === "catalog" && level === "codes") void loadCodesAPI();
@@ -231,7 +332,7 @@ export default function AdminCourseManagement({
         s.programId === selSection.program_id && 
         s.yearLevel === selSection.year_level
       );
-      const enrolledIds = new Set(sectionEnrollments.filter(e => e.section_id === selSection.section_id).map(e => String(e.student_id)));
+      const enrolledIds = new Set(sectionEnrollments.map(e => String(e.student_id)));
       const toSelect = eligible.filter(s => !enrolledIds.has(String(s._uuid))).map(s => s._uuid);
       setSelStudents(toSelect);
     } else {
@@ -244,6 +345,10 @@ export default function AdminCourseManagement({
   function showToast(msg: string, type: "success" | "warning" | "error" = "success") {
     setToast({ msg, type });
     setTimeout(() => setToast({ msg: "", type: "success" }), 5000);
+  }
+
+  function reqConfirm(title: string, message: string, action: () => void) {
+    setConfirmDialog({ isOpen: true, title, message, onConfirm: action });
   }
 
   function codePrefix(courseCode: string): string {
@@ -288,12 +393,12 @@ export default function AdminCourseManagement({
 
     const activeSy = sys.find((s) => s.is_active);
     if (activeSy) {
-      setOffFilterSy(activeSy.sy_id);
-      setSelCurriculumSy(activeSy.sy_id);
+      if (!offFilterSy) setOffFilterSy(activeSy.sy_id);
+      if (!selCurriculumSy) setSelCurriculumSy(activeSy.sy_id);
       setRolloverForm(prev => ({ ...prev, sourceSyId: activeSy.sy_id, targetSyId: activeSy.sy_id }));
     } else if (sys.length > 0) {
-      setOffFilterSy(sys[0].sy_id);
-      setSelCurriculumSy(sys[0].sy_id);
+      if (!offFilterSy) setOffFilterSy(sys[0].sy_id);
+      if (!selCurriculumSy) setSelCurriculumSy(sys[0].sy_id);
       setRolloverForm(prev => ({ ...prev, sourceSyId: sys[0].sy_id, targetSyId: sys[0].sy_id }));
     }
   }
@@ -364,19 +469,41 @@ export default function AdminCourseManagement({
   async function loadCatalogSectionsAPI() {
     if (!selCourse) return;
     setLoading(true);
+    setSelEnrolledForDelete([]);
+    
+    const isForeignSort = ["room_name", "program_code", "schedule_label"].includes(sectionSort.field);
     let q = supabase.from("course_sections").select(`*, rooms(room_name), program(code)`).eq("course_id", selCourse._uuid).eq("sy_id", offFilterSy).eq("semester", offFilterSemester);
     if (sectionSearch) q = q.ilike("section_label", `%${sectionSearch}%`);
-    q = q.order(sectionSort.field, { ascending: sectionSort.dir === "asc" });
+    if (!isForeignSort) q = q.order(sectionSort.field, { ascending: sectionSort.dir === "asc" });
 
     const { data: sectData, error } = await q;
     if (!error) {
-      const formattedSections = (sectData || []).map((sec: any) => ({ ...sec, room_name: sec.rooms?.room_name || "Unassigned", program_code: sec.program?.code || "All" }));
+      let formattedSections = (sectData || []).map((sec: any) => ({ ...sec, room_name: sec.rooms?.room_name || "Unassigned", program_code: sec.program?.code || "All" }));
+      
+      if (isForeignSort) {
+         formattedSections.sort((a, b) => {
+            const valA = String(a[sectionSort.field] || "").toLowerCase();
+            const valB = String(b[sectionSort.field] || "").toLowerCase();
+            return sectionSort.dir === "asc" ? valA.localeCompare(valB) : valB.localeCompare(valA);
+         });
+      }
       setSections(formattedSections);
       
       const sectionIds = formattedSections.map((section) => section.section_id);
       if (sectionIds.length > 0) {
-        const { data: enrollmentsData } = await supabase.from("student_course_assignments").select("assignment_id, section_id, student_id, enrollment_status, final_grade, completion_status").in("section_id", sectionIds);
-        setSectionEnrollments(enrollmentsData || []);
+        const { data: enrollmentsData } = await supabase.from("student_course_assignments")
+          .select(`
+            assignment_id, section_id, student_id, enrollment_status, final_grade, completion_status,
+            students!inner(student_id, users!inner(full_name, display_id))
+          `)
+          .in("section_id", sectionIds);
+          
+        const enriched = (enrollmentsData || []).map((e: any) => ({
+          ...e,
+          studentDisplayId: e.students?.student_id || e.students?.users?.display_id || "Unknown ID",
+          studentName: e.students?.users?.full_name || "Unknown Name"
+        }));
+        setSectionEnrollments(enriched);
       } else {
         setSectionEnrollments([]);
       }
@@ -389,6 +516,7 @@ export default function AdminCourseManagement({
     const from = offPage * offPageSize;
     const to = from + offPageSize - 1;
 
+    const isForeignSort = ["program_code", "room_name", "course_code", "course_name"].includes(offSort.field);
     let q = supabase.from("course_sections")
       .select("*, courses!inner(course_code, course_name), rooms(room_name), program(code)", { count: "exact" });
     
@@ -396,20 +524,21 @@ export default function AdminCourseManagement({
     if (offFilterSemester) q = q.eq("semester", offFilterSemester);
     if (offFilterCourse) q = q.eq("course_id", offFilterCourse);
     if (offeringSearch) q = q.ilike("courses.course_code", `%${offeringSearch}%`);
+    if (!isForeignSort) q = q.order(offSort.field, { ascending: offSort.dir === "asc" }).range(from, to);
 
-    const { data, count, error } = await q.order(offSort.field, { ascending: offSort.dir === "asc" }).range(from, to);
+    const { data, count, error } = await q;
 
     if (error) {
       showToast(error.message, "error");
     } else if (data && data.length > 0) {
-      const sectionIds = data.map(s => s.section_id);
+      const sectionIds = data.map((s: any) => s.section_id);
       const { data: enData } = await supabase.from("student_course_assignments")
         .select("section_id, enrollment_status").in("section_id", sectionIds).eq("enrollment_status", "Enrolled");
       
       const counts: Record<string, number> = {};
-      enData?.forEach(e => counts[e.section_id] = (counts[e.section_id] || 0) + 1);
+      enData?.forEach((e: any) => counts[e.section_id] = (counts[e.section_id] || 0) + 1);
 
-      const enriched = data.map(s => ({
+      let enriched = data.map((s: any) => ({
         ...s,
         course_code: s.courses?.course_code,
         course_name: s.courses?.course_name,
@@ -417,6 +546,17 @@ export default function AdminCourseManagement({
         room_name: s.rooms?.room_name || "Unassigned",
         program_code: s.program?.code || "All"
       }));
+
+      if (isForeignSort) {
+         enriched.sort((a, b) => {
+            const valA = String(a[offSort.field] || "").toLowerCase();
+            const valB = String(b[offSort.field] || "").toLowerCase();
+            return offSort.dir === "asc" ? valA.localeCompare(valB) : valB.localeCompare(valA);
+         });
+         if (enriched.length > offPageSize) {
+           enriched = enriched.slice(from, to + 1);
+         }
+      }
 
       setOfferings(enriched);
       setOfferingCount(count || 0);
@@ -429,17 +569,21 @@ export default function AdminCourseManagement({
 
   async function loadMappingsAPI() {
     setLoading(true);
+    const isForeignSort = ["course_code", "course_name", "program_code"].includes(mapSort.field);
     let q = supabase.from("course_program_map").select("id, course_id, program_id, year_level, semester, effective_sy_id, courses!inner(course_code, course_name, units), program(name, code)");
     
     if (mapFilterCourse) q = q.eq("course_id", mapFilterCourse);
     if (mapFilterProg) q = q.eq("program_id", mapFilterProg);
+    if (mapFilterYear) q = q.eq("year_level", mapFilterYear);
+    if (mapFilterSemester) q = q.eq("semester", mapFilterSemester);
     if (mainTab === "curriculum" && selCurriculumSy) q = q.eq("effective_sy_id", selCurriculumSy);
     if (mappingSearch) q = q.ilike("courses.course_name", `%${mappingSearch}%`);
+    if (!isForeignSort) q = q.order(mapSort.field, { ascending: mapSort.dir === "asc" });
 
-    const { data, error } = await q.order(mapSort.field, { ascending: mapSort.dir === "asc" });
+    const { data, error } = await q;
     
     if (!error && data) {
-      const formatted = data.map((m: any) => ({
+      let formatted = data.map((m: any) => ({
         ...m,
         course_id: m.course_id,
         course_code: m.courses?.course_code,
@@ -447,6 +591,14 @@ export default function AdminCourseManagement({
         units: m.courses?.units || 0,
         program_code: m.program?.code
       }));
+
+      if (isForeignSort) {
+         formatted.sort((a, b) => {
+            const valA = String(a[mapSort.field] || "").toLowerCase();
+            const valB = String(b[mapSort.field] || "").toLowerCase();
+            return mapSort.dir === "asc" ? valA.localeCompare(valB) : valB.localeCompare(valA);
+         });
+      }
       setMappings(formatted);
     }
     setLoading(false);
@@ -682,7 +834,7 @@ export default function AdminCourseManagement({
                 course_name: csvRows[i][1].trim(),
                 units: Number(csvRows[i][2].trim()) || 3
               });
-              if (csvRows[i][3]) prereqMap[code] = csvRows[i][3].replace(/"/g, "").split(";").map(s => s.trim().toUpperCase());
+              if (csvRows[i][5]) prereqMap[code] = csvRows[i][5].replace(/"/g, "").split(";").map(s => s.trim().toUpperCase());
             }
           }
           if (newCourses.length > 0) {
@@ -807,25 +959,36 @@ export default function AdminCourseManagement({
   async function handleCreateCourse() {
     if (!courseForm.code || !courseForm.name) { showToast("Course Code and Name are required.", "error"); return; }
     
-    const { data, error } = await supabase.from("courses").insert({ 
-      course_code: courseForm.code.toUpperCase(), 
-      course_name: courseForm.name, 
-      units: courseForm.units
-    }).select("course_id").single();
+    const toInsert = [];
+    if (courseForm.types.includes("LEC") && courseForm.types.includes("LAB")) {
+       toInsert.push({ course_code: courseForm.code + "LEC", course_name: courseForm.name, units: courseForm.lecUnits });
+       toInsert.push({ course_code: courseForm.code + "LAB", course_name: courseForm.name, units: courseForm.labUnits });
+    } else if (courseForm.types.includes("LEC")) {
+       toInsert.push({ course_code: courseForm.code + "LEC", course_name: courseForm.name, units: courseForm.lecUnits });
+    } else if (courseForm.types.includes("LAB")) {
+       toInsert.push({ course_code: courseForm.code + "LAB", course_name: courseForm.name, units: courseForm.labUnits });
+    } else {
+       toInsert.push({ course_code: courseForm.code, course_name: courseForm.name, units: courseForm.units });
+    }
 
+    const { data, error } = await supabase.from("courses").insert(toInsert).select("course_id");
     if (error) { showToast(error.message, "error"); return; }
 
     if (courseForm.prereqs.length > 0 && data) {
-      const prereqPayload = courseForm.prereqs.map(pId => ({
-        course_id: data.course_id,
-        prereq_course_id: pId
-      }));
-      await supabase.from("course_prerequisites").insert(prereqPayload);
+      const prereqPayload = [];
+      for (const row of data) {
+         for (const pId of courseForm.prereqs) {
+            prereqPayload.push({ course_id: row.course_id, prereq_course_id: pId });
+         }
+      }
+      if (prereqPayload.length > 0) {
+         await supabase.from("course_prerequisites").insert(prereqPayload);
+      }
     }
 
-    showToast("Course created successfully.", "success");
+    showToast("Course(s) created successfully.", "success");
     setShowCreateCourseModal(false);
-    setCourseForm({ code: "", name: "", units: 3, lec: 0, lab: 0, prereqs: [] });
+    setCourseForm({ code: "", name: "", units: 3, types: [], lecUnits: 2, labUnits: 1, prereqs: [] });
     await loadAllCourses();
     if (selCode) void loadCoursesAPI();
   }
@@ -912,11 +1075,13 @@ export default function AdminCourseManagement({
     void loadMappingsAPI();
   }
 
-  async function handleDeleteMapping(id: number) {
-    if (!confirm("Remove this mapping?")) return;
-    await supabase.from("course_program_map").delete().eq("id", id);
-    showToast("Mapping removed.", "success");
-    void loadMappingsAPI();
+  function handleDeleteMapping(id: number) {
+    reqConfirm("Remove Mapping", "Are you sure you want to remove this mapping?", async () => {
+      const { error } = await supabase.from("course_program_map").delete().eq("id", id);
+      if (error) { showToast(error.message, "error"); return; }
+      showToast("Mapping removed.", "success");
+      void loadMappingsAPI();
+    });
   }
 
   async function handleCreateRoom() {
@@ -928,11 +1093,13 @@ export default function AdminCourseManagement({
     await loadReferences();
   }
 
-  async function handleDeleteRoom(roomId: string) {
-    const { error } = await supabase.from("rooms").delete().eq("room_id", roomId);
-    if (error) { showToast("Cannot delete active room.", "error"); return; }
-    showToast("Room deleted.", "success");
-    await loadReferences();
+  function handleDeleteRoom(roomId: string) {
+    reqConfirm("Delete Room", "Are you sure you want to delete this room?", async () => {
+      const { error } = await supabase.from("rooms").delete().eq("room_id", roomId);
+      if (error) { showToast("Cannot delete active room.", "error"); return; }
+      showToast("Room deleted.", "success");
+      await loadReferences();
+    });
   }
 
   async function handleCreateSchedule() {
@@ -948,11 +1115,13 @@ export default function AdminCourseManagement({
     await loadReferences();
   }
 
-  async function handleDeleteSchedule(id: string) {
-    const { error } = await supabase.from("schedules").delete().eq("id", id);
-    if (error) { showToast("Error deleting schedule.", "error"); return; }
-    showToast("Schedule deleted.", "success");
-    await loadReferences();
+  function handleDeleteSchedule(id: string) {
+    reqConfirm("Delete Schedule", "Are you sure you want to delete this schedule?", async () => {
+      const { error } = await supabase.from("schedules").delete().eq("id", id);
+      if (error) { showToast("Error deleting schedule.", "error"); return; }
+      showToast("Schedule deleted.", "success");
+      await loadReferences();
+    });
   }
 
   async function handleAddPrerequisite() {
@@ -968,12 +1137,14 @@ export default function AdminCourseManagement({
     void loadAllCourses(); 
   }
 
-  async function handleRemovePrerequisite(id: string) {
-    const { error } = await supabase.from("course_prerequisites").delete().eq("id", id);
-    if (error) { showToast(error.message, "error"); return; }
-    showToast("Prerequisite removed.", "success");
-    void loadPrerequisites(selCourse._uuid);
-    void loadAllCourses();
+  function handleRemovePrerequisite(id: string) {
+    reqConfirm("Remove Prerequisite", "Are you sure you want to remove this prerequisite?", async () => {
+      const { error } = await supabase.from("course_prerequisites").delete().eq("id", id);
+      if (error) { showToast(error.message, "error"); return; }
+      showToast("Prerequisite removed.", "success");
+      void loadPrerequisites(selCourse._uuid);
+      void loadAllCourses();
+    });
   }
 
   async function handleRollover() {
@@ -992,17 +1163,31 @@ export default function AdminCourseManagement({
     if (mainTab === "offerings") void loadOfferingsAPI();
   }
 
-  async function handleUnenrollStudent(assignmentId: string) {
-    if (!confirm("Remove student from this section?")) return;
-    const { error } = await supabase.from("student_course_assignments").delete().eq("assignment_id", assignmentId);
-    if (error) { showToast(error.message, "error"); return; }
-    
-    setSectionEnrollments(prev => prev.filter(e => e.assignment_id !== assignmentId));
-    setOfferingEnrollments(prev => prev.filter(e => e.assignment_id !== assignmentId));
-    showToast("Student removed.", "success");
-    
-    if (mainTab === "offerings") void loadOfferingsAPI();
-    if (mainTab === "catalog" && selCourse) void loadCatalogSectionsAPI();
+  function handleUnenrollStudent(assignmentId: string) {
+    reqConfirm("Remove Student", "Are you sure you want to unenroll this student?", async () => {
+      const { error } = await supabase.from("student_course_assignments").delete().eq("assignment_id", assignmentId);
+      if (error) { showToast(error.message, "error"); return; }
+      
+      setSectionEnrollments(prev => prev.filter(e => e.assignment_id !== assignmentId));
+      setOfferingEnrollments(prev => prev.filter(e => e.assignment_id !== assignmentId));
+      showToast("Student removed.", "success");
+      
+      if (mainTab === "offerings") void loadOfferingsAPI();
+      if (mainTab === "catalog" && selCourse) void loadCatalogSectionsAPI();
+    });
+  }
+
+  function handleBulkUnenroll() {
+    if (selEnrolledForDelete.length === 0) return;
+    reqConfirm("Bulk Remove Students", `Remove ${selEnrolledForDelete.length} selected students?`, async () => {
+      const { error } = await supabase.from("student_course_assignments").delete().in("assignment_id", selEnrolledForDelete);
+      if (error) { showToast(error.message, "error"); return; }
+      
+      setSectionEnrollments(prev => prev.filter(e => !selEnrolledForDelete.includes(e.assignment_id)));
+      setSelEnrolledForDelete([]);
+      showToast("Students removed.", "success");
+      if (mainTab === "catalog" && selCourse) void loadCatalogSectionsAPI();
+    });
   }
 
   async function promoteWaitlistStudent(assignmentId: string) {
@@ -1014,39 +1199,47 @@ export default function AdminCourseManagement({
     if (mainTab === "catalog" && selCourse) void loadCatalogSectionsAPI();
   }
 
-  async function deleteSelectedCodes() {
+  function deleteSelectedCodes() {
     if (selCodesForDelete.length === 0) return;
-    const ids = allCourses.filter((c) => selCodesForDelete.includes(codePrefix(c.code))).map(c => c._uuid);
-    if (ids.length === 0) return;
-    const { error } = await supabase.from("courses").delete().in("course_id", ids);
-    if (!error) { showToast("Code groups deleted.", "success"); setSelCodesForDelete([]); await loadAllCourses(); void loadCodesAPI(); }
+    reqConfirm("Delete Code Groups", `Delete ${selCodesForDelete.length} code groups?`, async () => {
+      const ids = allCourses.filter((c) => selCodesForDelete.includes(codePrefix(c.code))).map(c => c._uuid);
+      if (ids.length === 0) return;
+      const { error } = await supabase.from("courses").delete().in("course_id", ids);
+      if (!error) { showToast("Code groups deleted.", "success"); setSelCodesForDelete([]); await loadAllCourses(); void loadCodesAPI(); }
+    });
   }
 
-  async function deleteSelectedCourses() {
+  function deleteSelectedCourses() {
     if (selCoursesForDelete.length === 0) return;
-    const { error } = await supabase.from("courses").delete().in("course_id", selCoursesForDelete);
-    if (!error) { showToast("Courses deleted.", "success"); setSelCoursesForDelete([]); await loadAllCourses(); void loadCoursesAPI(); }
+    reqConfirm("Delete Courses", `Delete ${selCoursesForDelete.length} courses?`, async () => {
+      const { error } = await supabase.from("courses").delete().in("course_id", selCoursesForDelete);
+      if (!error) { showToast("Courses deleted.", "success"); setSelCoursesForDelete([]); await loadAllCourses(); void loadCoursesAPI(); }
+    });
   }
 
-  async function deleteSelectedSections() {
+  function deleteSelectedSections() {
     if (selSectionsForDelete.length === 0) return;
-    const { error } = await supabase.from("course_sections").delete().in("section_id", selSectionsForDelete);
-    if (!error) { 
-      showToast("Sections deleted.", "success"); 
-      setSelSectionsForDelete([]); 
-      if (mainTab === "catalog" && selCourse) void loadCatalogSectionsAPI();
-      if (mainTab === "offerings") void loadOfferingsAPI();
-    }
+    reqConfirm("Delete Sections", `Delete ${selSectionsForDelete.length} sections?`, async () => {
+      const { error } = await supabase.from("course_sections").delete().in("section_id", selSectionsForDelete);
+      if (!error) { 
+        showToast("Sections deleted.", "success"); 
+        setSelSectionsForDelete([]); 
+        if (mainTab === "catalog" && selCourse) void loadCatalogSectionsAPI();
+        if (mainTab === "offerings") void loadOfferingsAPI();
+      }
+    });
   }
 
-  async function deleteSelectedMappings() {
+  function deleteSelectedMappings() {
     if (selMappingsForDelete.length === 0) return;
-    const { error } = await supabase.from("course_program_map").delete().in("id", selMappingsForDelete);
-    if (!error) {
-      showToast("Mappings deleted.", "success");
-      setSelMappingsForDelete([]);
-      void loadMappingsAPI();
-    }
+    reqConfirm("Delete Mappings", `Delete ${selMappingsForDelete.length} mappings?`, async () => {
+      const { error } = await supabase.from("course_program_map").delete().in("id", selMappingsForDelete);
+      if (!error) {
+        showToast("Mappings deleted.", "success");
+        setSelMappingsForDelete([]);
+        void loadMappingsAPI();
+      }
+    });
   }
 
   async function enrollStudents() {
@@ -1163,9 +1356,18 @@ export default function AdminCourseManagement({
     setEnrolledFilter("");
     setLoading(true);
     const { data } = await supabase.from("student_course_assignments")
-      .select("assignment_id, student_id, enrollment_status, final_grade, completion_status")
+      .select(`
+        assignment_id, student_id, enrollment_status, final_grade, completion_status,
+        students!inner(student_id, users!inner(full_name, display_id))
+      `)
       .eq("section_id", section.section_id);
-    setOfferingEnrollments(data || []);
+    
+    const enriched = (data || []).map((e: any) => ({
+      ...e,
+      studentDisplayId: e.students?.student_id || e.students?.users?.display_id || "Unknown ID",
+      studentName: e.students?.users?.full_name || "Unknown Name"
+    }));
+    setOfferingEnrollments(enriched);
     setLoading(false);
   }
 
@@ -1191,12 +1393,33 @@ export default function AdminCourseManagement({
 
   const filteredPrograms = programs.filter(p => validProgramIds.includes(p.program_id));
 
+  const programOptions = filteredPrograms.length > 0 
+    ? [{ value: "", label: "— All Mapped Programs —" }, ...filteredPrograms.map(p => ({ value: p.program_id, label: p.code }))] 
+    : [];
+
+  const teacherList = users.filter(u => u.role === "teacher");
+  const teacherOptions = teacherList.length > 0 
+    ? [{ value: "", label: "— Select Teacher (Optional) —" }, ...teacherList.map(t => ({ value: t._uuid, label: t.fullName }))] 
+    : [];
+
+  const roomOptions = rooms.length > 0 
+    ? [{ value: "", label: "— Select Room (Optional) —" }, ...rooms.map(r => ({ value: r.room_id, label: `${r.room_name} (Max ${r.capacity})` }))] 
+    : [];
+
+  const scheduleOptions = schedules.length > 0 
+    ? [{ value: "", label: "— Select Schedule (Optional) —" }, ...schedules.map(s => ({ value: s.schedule_label, label: s.schedule_label }))] 
+    : [];
+
+  const studentOptions = studentsList.length > 0 
+    ? studentsList.map(s => ({ value: s._uuid, label: `${s.displayId} - ${s.fullName} (${programs.find(p => p.program_id === s.programId)?.code || "No Program"})` })) 
+    : [];
+
   const eligibleStudents = useMemo(() => {
     if (!selSection || !selSection.program_id) return [];
     return studentsList.filter(s => {
       if (s.programId !== selSection.program_id) return false;
       if (selSection.year_level && s.yearLevel !== selSection.year_level) return false;
-      if (studentSearch && !s.fullName.toLowerCase().includes(studentSearch.toLowerCase())) return false;
+      if (studentSearch && !s.fullName.toLowerCase().includes(studentSearch.toLowerCase()) && !s.displayId.toLowerCase().includes(studentSearch.toLowerCase())) return false;
       return true;
     });
   }, [studentsList, selSection, studentSearch]);
@@ -1213,9 +1436,6 @@ export default function AdminCourseManagement({
     return groups;
   }, [mappings, selCurriculumProg]);
 
-  const teachersList = users.filter((u) => u.role === "teacher");
-  const enrolledStudentIds = new Set(selSection ? sectionEnrollments.filter((e) => e.section_id === selSection.section_id).map((e) => String(e.student_id)) : []);
-  
   const isTermLocked = useMemo(() => {
      return schoolYears.find(sy => sy.sy_id === offFilterSy)?.is_locked || false;
   }, [schoolYears, offFilterSy]);
@@ -1227,11 +1447,11 @@ export default function AdminCourseManagement({
       grade: e.final_grade,
       id: e.assignment_id,
       status: e.enrollment_status,
-      studentId: e.student_id,
-      studentName: users.find((s) => String(s._uuid) === String(e.student_id))?.fullName || "Unknown",
+      studentId: e.studentDisplayId,
+      studentName: e.studentName,
     }))
     .filter((row) => {
-      if (enrolledSearch && !row.studentName.toLowerCase().includes(enrolledSearch.toLowerCase())) return false;
+      if (enrolledSearch && !row.studentName.toLowerCase().includes(enrolledSearch.toLowerCase()) && !row.studentId.toLowerCase().includes(enrolledSearch.toLowerCase())) return false;
       if (enrolledFilter && row.status !== enrolledFilter) return false;
       return true;
     });
@@ -1242,11 +1462,11 @@ export default function AdminCourseManagement({
       grade: e.final_grade,
       id: e.assignment_id,
       status: e.enrollment_status,
-      studentId: e.student_id,
-      studentName: users.find((s) => String(s._uuid) === String(e.student_id))?.fullName || "Unknown",
+      studentId: e.studentDisplayId,
+      studentName: e.studentName,
     }))
     .filter((row) => {
-      if (enrolledSearch && !row.studentName.toLowerCase().includes(enrolledSearch.toLowerCase())) return false;
+      if (enrolledSearch && !row.studentName.toLowerCase().includes(enrolledSearch.toLowerCase()) && !row.studentId.toLowerCase().includes(enrolledSearch.toLowerCase())) return false;
       if (enrolledFilter && row.status !== enrolledFilter) return false;
       return true;
     });
@@ -1271,35 +1491,37 @@ export default function AdminCourseManagement({
     { field: "section_label", header: "Section", width: 100, sortable: true },
     { field: "program_code", header: "Program", width: 120, sortable: true },
     { field: "schedule_label", header: "Schedule", width: 180, sortable: true },
-    { field: "room_name", header: "Room", width: 100 },
+    { field: "room_name", header: "Room", width: 100, sortable: true },
     { cellRenderer: (_: any, row: any) => <span>{row.max_capacity === null ? "∞" : row.max_capacity}</span>, field: "max_capacity", header: "Capacity", width: 100, sortable: true },
   ];
 
   const offeringsCols = [
     { cellRenderer: (_: any, row: any) => <input checked={selSectionsForDelete.includes(row.section_id)} onChange={() => toggleSelection(row.section_id, selSectionsForDelete, setSelSectionsForDelete)} onClick={(e) => e.stopPropagation()} type="checkbox" />, field: "select", header: <input checked={offerings.length > 0 && selSectionsForDelete.length === offerings.length} onChange={(e) => setSelSectionsForDelete(e.target.checked ? offerings.map(s=>s.section_id) : [])} type="checkbox" />, sortable: false, width: 50 },
-    { field: "course_code", header: "Course Code", width: 120, sortable: false },
-    { field: "course_name", header: "Course Name", flex: 1, sortable: false },
+    { field: "course_code", header: "Course Code", width: 120, sortable: true },
+    { field: "course_name", header: "Course Name", flex: 1, sortable: true },
     { field: "section_label", header: "Section", width: 90, sortable: true },
-    { field: "program_code", header: "Program", width: 100, sortable: false },
+    { field: "program_code", header: "Program", width: 100, sortable: true },
     { field: "semester", header: "Semester", width: 100, sortable: true },
-    { field: "schedule_label", header: "Schedule", width: 180, sortable: false },
-    { field: "room_name", header: "Room", width: 100, sortable: false },
+    { field: "schedule_label", header: "Schedule", width: 180, sortable: true },
+    { field: "room_name", header: "Room", width: 100, sortable: true },
     { cellRenderer: (_: any, row: any) => <span>{row.enrolled_count} / {row.max_capacity === null ? "∞" : (row.max_capacity || 30)}</span>, field: "max_capacity", header: "Capacity", width: 100, sortable: true },
     { cellRenderer: (_: any, row: any) => <Btn onClick={(e: any) => { e.stopPropagation(); openOfferingDetailsModal(row); }} size="sm" variant="secondary">View Details</Btn>, field: "section_id", header: "Action", sortable: false, width: 120 },
   ];
 
   const mappingsCols = [
     { cellRenderer: (_: any, row: any) => <input checked={selMappingsForDelete.includes(row.id)} onChange={() => toggleSelection(row.id, selMappingsForDelete, setSelMappingsForDelete)} onClick={(e) => e.stopPropagation()} type="checkbox" />, field: "select", header: <input checked={mappings.length > 0 && selMappingsForDelete.length === mappings.length} onChange={(e) => setSelMappingsForDelete(e.target.checked ? mappings.map(m=>m.id) : [])} type="checkbox" />, sortable: false, width: 50 },
-    { field: "course_code", header: "Course", width: 120 },
-    { field: "course_name", header: "Course Name", flex: 1 },
-    { field: "program_code", header: "Program", width: 120 },
+    { field: "course_code", header: "Course", width: 120, sortable: true },
+    { field: "course_name", header: "Course Name", flex: 1, sortable: true },
+    { field: "program_code", header: "Program", width: 120, sortable: true },
     { field: "year_level", header: "Year Level", width: 120, sortable: true },
     { field: "semester", header: "Semester", width: 150, sortable: true },
     { cellRenderer: (_: any, row: any) => <Btn onClick={(e: any) => { e.stopPropagation(); handleDeleteMapping(row.id); }} size="sm" variant="danger">Remove</Btn>, field: "id", header: "Action", sortable: false, width: 90 },
   ];
 
   const enrolledCols = [
-    { field: "studentName", header: "Student Name" },
+    { cellRenderer: (_: any, row: any) => <input checked={selEnrolledForDelete.includes(row.id)} onChange={() => toggleSelection(row.id, selEnrolledForDelete, setSelEnrolledForDelete)} onClick={(e) => e.stopPropagation()} type="checkbox" />, field: "select", header: <input checked={catalogEnrolledRows.length > 0 && selEnrolledForDelete.length === catalogEnrolledRows.length} onChange={(e) => setSelEnrolledForDelete(e.target.checked ? catalogEnrolledRows.map(s=>s.id) : [])} type="checkbox" />, sortable: false, width: 50 },
+    { field: "studentId", header: "Student ID", width: 150, sortable: true },
+    { field: "studentName", header: "Student Name", sortable: true },
     { cellRenderer: (v: string) => <Badge color={v === "Waitlisted" ? "warning" : "success"}>{v}</Badge>, field: "status", header: "Logistics", width: 100 },
     { cellRenderer: (v: number | null) => (v != null ? `${v}%` : "—"), field: "grade", header: "Final Grade", width: 90 },
     { cellRenderer: (v: string, row: any) => isTermLocked ? (
@@ -1335,6 +1557,25 @@ export default function AdminCourseManagement({
         .au-table td:nth-child(2) { text-align: left; }
       `}</style>
       
+      <div style={{ pointerEvents: toast.msg ? "auto" : "none", position: "fixed", right: "20px", top: "20px", transform: toast.msg ? "translateY(0)" : "translateY(-20px)", transition: "all 0.3s ease", zIndex: 99999, opacity: toast.msg ? 1 : 0 }}>
+        <div style={{ alignItems: "center", background: toast.type === "error" ? "#fef2f2" : toast.type === "warning" ? "#fffbeb" : "#f0fdf4", border: `1px solid ${toast.type === "error" ? "#f87171" : toast.type === "warning" ? "#fbbf24" : "#34d399"}`, borderRadius: "8px", boxShadow: "0 10px 15px -3px rgba(0,0,0,0.1)", color: toast.type === "error" ? "#dc2626" : toast.type === "warning" ? "#d97706" : "#059669", display: "flex", fontSize: "14px", fontWeight: 600, gap: "10px", padding: "12px 20px" }}>
+          {toast.msg}
+        </div>
+      </div>
+
+      {confirmDialog.isOpen && (
+        <div style={{ alignItems: "center", background: "rgba(0,0,0,0.6)", display: "flex", inset: 0, justifyContent: "center", position: "fixed", zIndex: 99999 }}>
+          <div style={{ background: "#1e293b", borderRadius: "8px", padding: "24px", width: "400px" }}>
+            <h3 style={{ color: "#f1f5f9", margin: "0 0 12px 0" }}>{confirmDialog.title}</h3>
+            <p style={{ color: "#cbd5e1", fontSize: "14px", margin: "0 0 24px 0" }}>{confirmDialog.message}</p>
+            <div style={{ display: "flex", gap: "12px", justifyContent: "flex-end" }}>
+              <Btn onClick={() => setConfirmDialog({...confirmDialog, isOpen: false})} variant="secondary">Cancel</Btn>
+              <Btn onClick={() => { confirmDialog.onConfirm(); setConfirmDialog({...confirmDialog, isOpen: false}); }} variant="danger">Confirm</Btn>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="no-print">
         <TopBar subtitle="Unified Catalog, Offerings, Mappings, and Curriculum" title="Course Management" />
 
@@ -1409,7 +1650,7 @@ export default function AdminCourseManagement({
             {mainTab === "catalog" && level === "course" && (
               <>
                 <Btn onClick={() => downloadExportCSV(courses, "Courses_Filtered_Export.csv")} size="sm" variant="ghost">Export CSV</Btn>
-                <Btn onClick={() => { setCourseForm({ code: selCode ? `${selCode} ` : "", lab: 0, lec: 3, name: "", prereqs: [], units: 3 }); setShowCreateCourseModal(true); }} size="sm">+ Create Course</Btn>
+                <Btn onClick={() => { setCourseForm({ code: selCode ? `${selCode} ` : "", labUnits: 1, lecUnits: 2, name: "", prereqs: [], types: [], units: 3 }); setShowCreateCourseModal(true); }} size="sm">+ Create Course</Btn>
                 {selCoursesForDelete.length > 0 && <Btn onClick={deleteSelectedCourses} size="sm" variant="danger">Delete Selected ({selCoursesForDelete.length})</Btn>}
               </>
             )}
@@ -1419,7 +1660,7 @@ export default function AdminCourseManagement({
                 <Btn onClick={() => downloadExportCSV(sections, "Sections_Export.csv")} size="sm" variant="ghost">Export CSV</Btn>
                 <Btn onClick={() => { setImportType("sections"); fileInputRef.current?.click(); }} size="sm" variant="secondary">Import Sections</Btn>
                 <Btn onClick={openPrereqModal} size="sm" variant="ghost">Manage Prerequisites</Btn>
-                <Btn onClick={() => { setCourseForm({ code: selCourse.code, lab: selCourse.lab_hours || 0, lec: selCourse.lec_hours || 0, name: selCourse.name, prereqs: [], units: selCourse.units }); setShowEditCourseModal(true); }} size="sm" variant="ghost">Edit Course</Btn>
+                <Btn onClick={() => { setCourseForm({ code: selCourse.code, labUnits: selCourse.lab_hours || 0, lecUnits: selCourse.lec_hours || 0, name: selCourse.name, prereqs: [], types: [], units: selCourse.units }); setShowEditCourseModal(true); }} size="sm" variant="ghost">Edit Course</Btn>
                 <Btn onClick={openCreateSectionModal} size="sm">+ Create Section</Btn>
                 {selSection && <Btn onClick={openAuditModal} size="sm" variant="ghost">Audit Materials</Btn>}
                 {selSection && <Btn onClick={openEditSectionModal} size="sm" variant="secondary">Edit Section Setup</Btn>}
@@ -1437,14 +1678,6 @@ export default function AdminCourseManagement({
             )}
           </div>
         </div>
-
-        {toast.msg && (
-          <div style={{ padding: "10px 20px 0" }}>
-            <div style={{ background: toast.type === "error" ? "rgba(239,68,68,.12)" : toast.type === "warning" ? "rgba(245,158,11,.12)" : "rgba(16,185,129,.12)", border: `1px solid ${toast.type === "error" ? "rgba(239,68,68,.3)" : toast.type === "warning" ? "rgba(245,158,11,.3)" : "rgba(16,185,129,.3)"}`, borderRadius: "8px", color: toast.type === "error" ? "#f87171" : toast.type === "warning" ? "#fbbf24" : "#34d399", fontSize: "13px", fontWeight: 600, padding: "9px 14px" }}>
-              {toast.msg}
-            </div>
-          </div>
-        )}
       </div>
 
       <div className="no-print" style={{ display: mainTab === "curriculum" ? "none" : "flex", flex: 1, overflow: "hidden" }}>
@@ -1473,7 +1706,9 @@ export default function AdminCourseManagement({
               </div>
 
               <div style={{ display: "flex", flex: 1, flexDirection: "column", gap: "8px", marginBottom: "16px", overflowY: "auto" }}>
-                {!selSection?.program_id ? (
+                {!selSection ? (
+                  <div style={{ color: "#64748b", fontSize: "12px", textAlign: "center", marginTop: "20px" }}>Select a section to load eligible students.</div>
+                ) : !selSection.program_id ? (
                   <div style={{ color: "#fbbf24", fontSize: "12px", textAlign: "center", marginTop: "20px" }}>Assign a Program to this section to auto-load the eligible student block.</div>
                 ) : eligibleStudents.length === 0 ? (
                   <div style={{ color: "#64748b", fontSize: "12px", textAlign: "center", marginTop: "20px" }}>No eligible students found for this block.</div>
@@ -1481,7 +1716,7 @@ export default function AdminCourseManagement({
                   eligibleStudents.map((s) => (
                     <label key={s._uuid} style={{ alignItems: "center", color: "#e2e8f0", cursor: "pointer", display: "flex", fontSize: "12px", gap: "8px" }}>
                       <input checked={selStudents.includes(s._uuid)} onChange={(e) => setSelStudents((prev) => e.target.checked ? [...prev, s._uuid] : prev.filter((id) => id !== s._uuid))} type="checkbox" />
-                      {s.fullName}
+                      {s.displayId} - {s.fullName}
                     </label>
                   ))
                 )}
@@ -1492,24 +1727,46 @@ export default function AdminCourseManagement({
                 <Btn disabled={isLoading || selStudents.length === 0 || !selSection} onClick={enrollStudents} style={{ flex: 1 }}>{isLoading ? "Wait..." : `Enroll ${selStudents.length}`}</Btn>
               </div>
               <div style={{ textAlign: "center", marginTop: "8px" }}>
-                <a style={{ color: "#6366f1", fontSize: "11px", cursor: "pointer", textDecoration: "underline" }} onClick={() => downloadCSVTemplate("students_to_section")}>Download CSV Template</a>
+                <a onClick={() => downloadCSVTemplate("students_to_section")} style={{ color: "#6366f1", cursor: "pointer", fontSize: "11px", textDecoration: "underline" }}>Download CSV Template</a>
               </div>
             </div>
 
             <div style={{ background: "#0f172a", display: "flex", flex: 1, flexDirection: "column" }}>
               <div style={{ borderBottom: "1px solid #334155", flex: "0 0 40%", padding: "16px" }}>
-                <LMSGrid columns={sectionCols} height="100%" onRowClick={(row) => { setSelSection(row); setSelStudents([]); setEnrolledSearch(""); setEnrolledFilter(""); toggleSelection(row.section_id, selSectionsForDelete, setSelSectionsForDelete); }} onSortChange={(f, d) => setSectionSort({ field: f, dir: d as "asc"|"desc" })} rowData={sections} selectedId={selSection?.section_id} sortDir={sectionSort.dir} sortField={sectionSort.field} />
+                <LMSGrid 
+                  columns={sectionCols} 
+                  height="100%" 
+                  onRowClick={(row) => {
+                    if (selSection?.section_id === row.section_id) {
+                      setSelSection(null);
+                      setSelStudents([]);
+                      setEnrolledSearch("");
+                      setEnrolledFilter("");
+                    } else {
+                      setSelSection(row);
+                      setSelStudents([]);
+                      setEnrolledSearch("");
+                      setEnrolledFilter("");
+                    }
+                  }} 
+                  onSortChange={(f, d) => setSectionSort({ field: f, dir: d as "asc"|"desc" })} 
+                  rowData={sections} 
+                  selectedId={selSection?.section_id} 
+                  sortDir={sectionSort.dir} 
+                  sortField={sectionSort.field} 
+                />
               </div>
               <div style={{ background: "#0a0f1a", display: "flex", flex: 1, flexDirection: "column", padding: "16px" }}>
                 {selSection ? (
                   <>
                     <div style={{ display: "flex", gap: "10px", marginBottom: "12px" }}>
-                      <Input onChange={(e) => setEnrolledSearch(e.target.value)} placeholder="Search enrolled student..." style={{ width: 200 }} value={enrolledSearch} />
+                      <Input onChange={(e) => setEnrolledSearch(e.target.value)} placeholder="Search ID or Name..." style={{ width: 200 }} value={enrolledSearch} />
                       <Sel onChange={(e) => setEnrolledFilter(e.target.value)} style={{ width: 150 }} value={enrolledFilter}>
                         <option value="">All Statuses</option>
                         <option value="Enrolled">Enrolled</option>
                         <option value="Waitlisted">Waitlisted</option>
                       </Sel>
+                      {selEnrolledForDelete.length > 0 && <Btn onClick={handleBulkUnenroll} size="sm" variant="danger">Remove Selected ({selEnrolledForDelete.length})</Btn>}
                       <Btn onClick={() => downloadExportCSV(catalogEnrolledRows, `Roster_${selSection.section_label}.csv`)} size="sm" style={{ marginLeft: "auto" }} variant="ghost">Export CSV</Btn>
                     </div>
                     <div style={{ flex: 1, overflow: "hidden" }}>
@@ -1666,30 +1923,30 @@ export default function AdminCourseManagement({
       <div className="no-print">
         {conflictModal.show && (
           <div style={{ alignItems: "center", background: "rgba(0,0,0,0.7)", bottom: 0, display: "flex", justifyContent: "center", left: 0, position: "fixed", right: 0, top: 0, zIndex: 1000 }}>
-            <div style={{ background: "#1e293b", borderRadius: "8px", padding: "24px", width: "600px", display: "flex", flexDirection: "column", maxHeight: "80vh" }}>
+            <div style={{ background: "#1e293b", borderRadius: "8px", display: "flex", flexDirection: "column", maxHeight: "80vh", padding: "24px", width: "600px" }}>
               <h3 style={{ color: "#f87171", margin: "0 0 8px 0" }}>Schedule Conflicts Detected</h3>
               <p style={{ color: "#94a3b8", fontSize: "13px", marginBottom: "16px" }}>
                 The following students are already booked for a class at this time. Select any students below to <strong>Force Enroll</strong> them anyway.
               </p>
               
               <div style={{ background: "#0f172a", border: "1px solid #334155", borderRadius: "8px", flex: 1, overflowY: "auto", padding: "16px" }}>
-                 <div style={{ borderBottom: "1px solid #334155", display: "flex", paddingBottom: "8px", marginBottom: "8px" }}>
+                 <div style={{ borderBottom: "1px solid #334155", display: "flex", marginBottom: "8px", paddingBottom: "8px" }}>
                     <input 
-                      type="checkbox" 
                       checked={conflictModal.forceIds.length === conflictModal.conflicted.length && conflictModal.conflicted.length > 0}
                       onChange={(e) => setConflictModal(prev => ({ ...prev, forceIds: e.target.checked ? prev.conflicted.map(c => c.id) : [] }))} 
+                      type="checkbox"
                     />
                     <span style={{ color: "#f1f5f9", fontSize: "12px", fontWeight: 700, marginLeft: "12px" }}>Select All Conflicted</span>
                  </div>
                  {conflictModal.conflicted.map(c => (
-                   <label key={c.id} style={{ display: "flex", alignItems: "center", gap: "12px", padding: "8px 0", borderBottom: "1px solid #1e293b", cursor: "pointer" }}>
+                   <label key={c.id} style={{ alignItems: "center", borderBottom: "1px solid #1e293b", cursor: "pointer", display: "flex", gap: "12px", padding: "8px 0" }}>
                      <input 
-                       type="checkbox" 
                        checked={conflictModal.forceIds.includes(c.id)}
                        onChange={(e) => setConflictModal(prev => ({
                          ...prev,
                          forceIds: e.target.checked ? [...prev.forceIds, c.id] : prev.forceIds.filter(id => id !== c.id)
                        }))}
+                       type="checkbox"
                      />
                      <div style={{ color: "#e2e8f0", fontSize: "13px" }}>
                        <strong>{c.display}</strong> — {c.name}
@@ -1733,6 +1990,20 @@ export default function AdminCourseManagement({
 
               {mainTab === "mappings" && (
                 <>
+                  <div style={{ display: "grid", gap: "10px", gridTemplateColumns: "1fr 1fr", marginBottom: "12px" }}>
+                    <FF label="Year Level">
+                      <Sel onChange={(e) => setMapFilterYear(e.target.value)} style={{ width: "100%" }} value={mapFilterYear}>
+                        <option value="">All Years</option>
+                        {YEAR_LEVELS.map(y => <option key={y} value={y}>{y}</option>)}
+                      </Sel>
+                    </FF>
+                    <FF label="Semester">
+                      <Sel onChange={(e) => setMapFilterSemester(e.target.value)} style={{ width: "100%" }} value={mapFilterSemester}>
+                        <option value="">All Semesters</option>
+                        {SEMESTERS.map(s => <option key={s} value={s}>{s}</option>)}
+                      </Sel>
+                    </FF>
+                  </div>
                   <FF label="Course"><Sel onChange={(e) => setMapFilterCourse(e.target.value)} style={{ marginBottom: "12px", width: "100%" }} value={mapFilterCourse}>
                     <option value="">All Courses</option>
                     {allCourses.map(c => <option key={c._uuid} value={c._uuid}>{c.code}</option>)}
@@ -1755,22 +2026,20 @@ export default function AdminCourseManagement({
         {showManualEnrollModal && (
           <div style={{ alignItems: "center", background: "rgba(0,0,0,0.5)", bottom: 0, display: "flex", justifyContent: "center", left: 0, position: "fixed", right: 0, top: 0, zIndex: 1000 }}>
             <div style={{ background: "#1e293b", borderRadius: "8px", display: "flex", flexDirection: "column", maxHeight: "90vh", padding: "24px", width: "700px" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+              <div style={{ alignItems: "center", display: "flex", justifyContent: "space-between", marginBottom: "16px" }}>
                 <h3 style={{ color: "#f1f5f9", margin: 0 }}>Manual Student Multi-Enrollment</h3>
                 <Btn onClick={() => { setImportType("global_enrollments"); fileInputRef.current?.click(); }} size="sm" variant="secondary">Bulk Global Matrix CSV</Btn>
               </div>
               
               <div style={{ background: "#0f172a", border: "1px solid #334155", borderRadius: "8px", marginBottom: "16px", padding: "16px" }}>
                 <div style={{ color: "#94a3b8", fontSize: "12px", fontWeight: 700, marginBottom: "8px" }}>STEP 1: Select Student</div>
-                <div style={{ display: "flex", gap: "8px" }}>
-                  <Input onChange={(e) => setManualEnrollSearch(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void loadStudentsAPI(manualEnrollSearch); }} placeholder="Search by Student ID or Name + Enter..." style={{ flex: 1 }} value={manualEnrollSearch} />
-                </div>
-                {studentsList.length > 0 && (
-                  <Sel onChange={(e) => setManualEnrollStudentId(e.target.value)} style={{ marginTop: "8px", width: "100%" }} value={manualEnrollStudentId}>
-                    <option value="">— Select a student —</option>
-                    {studentsList.map(s => <option key={s._uuid} value={s._uuid}>{s.displayId} - {s.fullName} ({programs.find(p => p.program_id === s.programId)?.code || "No Program"})</option>)}
-                  </Sel>
-                )}
+                <SearchableSelect
+                  emptyMessage="No students available."
+                  onChange={setManualEnrollStudentId}
+                  options={studentOptions}
+                  placeholder="— Search and select a student —"
+                  value={manualEnrollStudentId}
+                />
               </div>
 
               <div style={{ background: "#0f172a", border: "1px solid #334155", borderRadius: "8px", display: "flex", flex: 1, flexDirection: "column", minHeight: "300px", padding: "16px" }}>
@@ -1811,7 +2080,7 @@ export default function AdminCourseManagement({
               </div>
               
               <div style={{ display: "flex", gap: "10px", marginBottom: "12px" }}>
-                <Input onChange={(e) => setEnrolledSearch(e.target.value)} placeholder="Search enrolled student..." style={{ width: 200 }} value={enrolledSearch} />
+                <Input onChange={(e) => setEnrolledSearch(e.target.value)} placeholder="Search ID or Name..." style={{ width: 200 }} value={enrolledSearch} />
                 <Sel onChange={(e) => setEnrolledFilter(e.target.value)} style={{ width: 150 }} value={enrolledFilter}>
                   <option value="">All Statuses</option>
                   <option value="Enrolled">Enrolled</option>
@@ -1853,7 +2122,7 @@ export default function AdminCourseManagement({
         )}
 
         {showRoomModal && (
-          <div style={{ alignItems: "center", background: "rgba(0,0,0,0.5)", bottom: 0, display: "flex", justifyContent: "center", left: 0, position: "fixed", right: 0, top: 0, zIndex: 1000 }}>
+          <div style={{ alignItems: "center", background: "rgba(0,0,0,0.5)", bottom: 0, display: "flex", justifyContent: "center", left: 0, position: "fixed", right: 0, top: 0, zIndex: 1001 }}>
             <div style={{ background: "#1e293b", borderRadius: "8px", padding: "24px", width: "500px" }}>
               <div style={{ alignItems: "center", display: "flex", justifyContent: "space-between", marginBottom: "16px" }}>
                 <h3 style={{ color: "#f1f5f9", margin: 0 }}>Manage Rooms</h3>
@@ -1896,13 +2165,23 @@ export default function AdminCourseManagement({
               </div>
               <div style={{ display: "flex", gap: "8px", marginBottom: "16px" }}>
                  <div style={{ flex: 1 }}>
-                   <Input list="start-times" onChange={(e) => setNewSchedStart(e.target.value)} placeholder="Start Time" style={{ width: "100%" }} value={newSchedStart} />
-                   <datalist id="start-times">{TIME_SLOTS.map(t => <option key={t} value={t} />)}</datalist>
+                   <SearchableSelect
+                      emptyMessage="No time slots"
+                      onChange={setNewSchedStart}
+                      options={TIME_SLOTS.map(t => ({ label: t, value: t }))}
+                      placeholder="Start Time"
+                      value={newSchedStart}
+                   />
                  </div>
                  <div style={{ alignSelf: "center", color: "#94a3b8" }}>to</div>
                  <div style={{ flex: 1 }}>
-                   <Input list="end-times" onChange={(e) => setNewSchedEnd(e.target.value)} placeholder="End Time" style={{ width: "100%" }} value={newSchedEnd} />
-                   <datalist id="end-times">{TIME_SLOTS.map(t => <option key={t} value={t} />)}</datalist>
+                   <SearchableSelect
+                      emptyMessage="No time slots"
+                      onChange={setNewSchedEnd}
+                      options={TIME_SLOTS.map(t => ({ label: t, value: t }))}
+                      placeholder="End Time"
+                      value={newSchedEnd}
+                   />
                  </div>
                  <Btn onClick={handleCreateSchedule}>Save</Btn>
               </div>
@@ -1937,11 +2216,30 @@ export default function AdminCourseManagement({
           <div style={{ alignItems: "center", background: "rgba(0,0,0,0.5)", bottom: 0, display: "flex", justifyContent: "center", left: 0, position: "fixed", right: 0, top: 0, zIndex: 1000 }}>
             <div style={{ background: "#1e293b", borderRadius: "8px", padding: "24px", width: "450px" }}>
               <h3 style={{ color: "#f1f5f9", margin: "0 0 16px 0" }}>Create Course</h3>
-              <Input onChange={(e) => setCourseForm({ ...courseForm, code: e.target.value })} placeholder="Course Code (e.g. CS101-LEC)" style={{ marginBottom: "12px" }} value={courseForm.code} />
+              <Input onChange={(e) => setCourseForm({ ...courseForm, code: e.target.value })} placeholder="Course Code (e.g. CS101)" style={{ marginBottom: "12px" }} value={courseForm.code} />
               <Input onChange={(e) => setCourseForm({ ...courseForm, name: e.target.value })} placeholder="Course Name" style={{ marginBottom: "12px" }} value={courseForm.name} />
-              <div style={{ display: "grid", gap: "10px", gridTemplateColumns: "1fr", marginBottom: "16px" }}>
-                <FF label="Total Units"><Input onChange={(e) => setCourseForm({ ...courseForm, units: Number(e.target.value) })} placeholder="Units" type="number" value={courseForm.units} /></FF>
+              
+              <div style={{ display: "flex", gap: "10px", marginBottom: "12px" }}>
+                <label style={{ alignItems: "center", color: "#f1f5f9", cursor: "pointer", display: "flex", fontSize: "13px", gap: "6px" }}>
+                  <input checked={courseForm.types.includes("LEC")} onChange={e => setCourseForm({...courseForm, types: e.target.checked ? [...courseForm.types, "LEC"] : courseForm.types.filter(t => t !== "LEC")})} type="checkbox" />
+                  Course has LEC
+                </label>
+                <label style={{ alignItems: "center", color: "#f1f5f9", cursor: "pointer", display: "flex", fontSize: "13px", gap: "6px" }}>
+                  <input checked={courseForm.types.includes("LAB")} onChange={e => setCourseForm({...courseForm, types: e.target.checked ? [...courseForm.types, "LAB"] : courseForm.types.filter(t => t !== "LAB")})} type="checkbox" />
+                  Course has LAB
+                </label>
               </div>
+
+              {courseForm.types.length === 0 ? (
+                <div style={{ marginBottom: "16px" }}>
+                  <FF label="Total Units"><Input onChange={(e) => setCourseForm({ ...courseForm, units: Number(e.target.value) })} placeholder="Units" type="number" value={courseForm.units} /></FF>
+                </div>
+              ) : (
+                <div style={{ display: "grid", gap: "10px", gridTemplateColumns: "1fr 1fr", marginBottom: "16px" }}>
+                  {courseForm.types.includes("LEC") && <FF label="Lec Units"><Input onChange={(e) => setCourseForm({ ...courseForm, lecUnits: Number(e.target.value) })} placeholder="Lec Units" type="number" value={courseForm.lecUnits} /></FF>}
+                  {courseForm.types.includes("LAB") && <FF label="Lab Units"><Input onChange={(e) => setCourseForm({ ...courseForm, labUnits: Number(e.target.value) })} placeholder="Lab Units" type="number" value={courseForm.labUnits} /></FF>}
+                </div>
+              )}
               
               <div style={{ borderTop: "1px solid #334155", marginBottom: "16px", paddingTop: "12px" }}>
                  <div style={{ color: "#f1f5f9", fontSize: "13px", fontWeight: 700, marginBottom: "8px" }}>Prerequisites</div>
@@ -1962,7 +2260,7 @@ export default function AdminCourseManagement({
                  </div>
               </div>
 
-              <div style={{ display: "flex", gap: "8px", justifyContent: "flex-end" }}><Btn onClick={() => setShowCreateCourseModal(false)} variant="secondary">Cancel</Btn><Btn onClick={handleCreateCourse}>Save Course</Btn></div>
+              <div style={{ display: "flex", gap: "8px", justifyContent: "flex-end" }}><Btn onClick={() => setShowCreateCourseModal(false)} variant="secondary">Cancel</Btn><Btn onClick={handleCreateCourse}>Save Course(s)</Btn></div>
             </div>
           </div>
         )}
@@ -2071,7 +2369,7 @@ export default function AdminCourseManagement({
         )}
 
         {(showCreateSectionModal || showEditSectionModal) && (
-          <div style={{ alignItems: "center", background: "rgba(0,0,0,0.5)", bottom: 0, display: "flex", justifyContent: "center", left: 0, position: "fixed", right: 0, top: 0, zIndex: 1000 }}>
+          <div style={{ alignItems: "center", background: "rgba(0,0,0,0.5)", bottom: 0, display: "flex", justifyContent: "center", left: 0, position: "fixed", right: 0, top: 0, zIndex: 999 }}>
             <div style={{ background: "#1e293b", borderRadius: "8px", padding: "24px", width: "450px" }}>
               <div style={{ alignItems: "center", display: "flex", justifyContent: "space-between", marginBottom: "16px" }}>
                 <h3 style={{ color: "#f1f5f9", margin: 0 }}>{showEditSectionModal ? "Edit Section Setup" : "Create Section"}</h3>
@@ -2087,13 +2385,17 @@ export default function AdminCourseManagement({
 
               <div style={{ display: "grid", gap: "10px", gridTemplateColumns: "1fr 1fr", marginBottom: "12px" }}>
                  <FF label="Program">
-                   <Sel onChange={(e) => setSectionForm({...sectionForm, programId: e.target.value})} style={{ width: "100%" }} value={sectionForm.programId}>
-                      <option value="">— Mapped Programs —</option>
-                      {filteredPrograms.map(p => <option key={p.program_id} value={p.program_id}>{p.code}</option>)}
-                   </Sel>
+                   <SearchableSelect
+                     emptyMessage="No mapped programs available."
+                     onAdd={() => setShowMappingModal(true)}
+                     onChange={(val: any) => setSectionForm({...sectionForm, programId: val})}
+                     options={programOptions}
+                     placeholder="— Mapped Programs —"
+                     value={sectionForm.programId}
+                   />
                  </FF>
                  <FF label="Year Level">
-                   <Sel onChange={(e) => setSectionForm({...sectionForm, yearLevel: e.target.value})} style={{ width: "100%" }} value={sectionForm.yearLevel}>
+                   <Sel onChange={(e) => setSectionForm({...sectionForm, yearLevel: e.target.value})} style={{ height: "38px", width: "100%" }} value={sectionForm.yearLevel}>
                       {YEAR_LEVELS.map(y => <option key={y} value={y}>{y}</option>)}
                    </Sel>
                  </FF>
@@ -2101,45 +2403,65 @@ export default function AdminCourseManagement({
 
               <div style={{ display: "grid", gap: "10px", gridTemplateColumns: "1fr 1fr", marginBottom: "12px" }}>
                  <FF label="School Year">
-                   <Sel disabled={showEditSectionModal} onChange={(e) => setSectionForm({...sectionForm, syId: e.target.value})} style={{ opacity: showEditSectionModal ? 0.6 : 1, width: "100%" }} value={sectionForm.syId}>
+                   <Sel disabled={showEditSectionModal} onChange={(e) => setSectionForm({...sectionForm, syId: e.target.value})} style={{ height: "38px", opacity: showEditSectionModal ? 0.6 : 1, width: "100%" }} value={sectionForm.syId}>
                       <option value="">— Select SY —</option>
                       {schoolYears.map(s => <option key={s.sy_id} value={s.sy_id}>{s.label}</option>)}
                    </Sel>
                  </FF>
                  <FF label="Semester">
-                   <Sel disabled={showEditSectionModal} onChange={(e) => setSectionForm({...sectionForm, semester: e.target.value})} style={{ opacity: showEditSectionModal ? 0.6 : 1, width: "100%" }} value={sectionForm.semester}>
+                   <Sel disabled={showEditSectionModal} onChange={(e) => setSectionForm({...sectionForm, semester: e.target.value})} style={{ height: "38px", opacity: showEditSectionModal ? 0.6 : 1, width: "100%" }} value={sectionForm.semester}>
                       {SEMESTERS.map(t => <option key={t} value={t}>{t}</option>)}
                    </Sel>
                  </FF>
               </div>
 
-              <div style={{ display: "flex", gap: "10px", marginBottom: "12px" }}>
-                 <Input disabled={showEditSectionModal} onChange={(e) => setSectionForm({...sectionForm, sectionLabel: e.target.value.toUpperCase()})} placeholder="Label" style={{ opacity: showEditSectionModal ? 0.6 : 1, width: "80px" }} value={sectionForm.sectionLabel} />
-                 <div style={{ alignSelf: "center", color: "#64748b", fontSize: "11px", lineHeight: "1.2" }}>
-                   {showEditSectionModal ? "Course identifiers cannot be changed after creation." : "Auto-generates next available code. Edit to override."}
-                 </div>
+              <div style={{ display: "grid", gap: "10px", gridTemplateColumns: "1fr", marginBottom: "12px" }}>
+                 <FF label="Section Code">
+                    <div style={{ display: "flex", gap: "10px" }}>
+                        <Input disabled={showEditSectionModal} onChange={(e) => setSectionForm({...sectionForm, sectionLabel: e.target.value.toUpperCase()})} placeholder="Label" style={{ height: "38px", opacity: showEditSectionModal ? 0.6 : 1, width: "120px" }} value={sectionForm.sectionLabel} />
+                        <div style={{ alignSelf: "center", color: "#64748b", fontSize: "11px", lineHeight: "1.2" }}>
+                        {showEditSectionModal ? "Course identifiers cannot be changed after creation." : "Auto-generates next available code. Edit to override."}
+                        </div>
+                    </div>
+                 </FF>
+              </div>
+              
+
+              <div style={{ marginBottom: "4px", width: "100%" }}>
+                 <SearchableSelect
+                   emptyMessage="No teachers available."
+                   onChange={(val: any) => setSectionForm({...sectionForm, teacherId: val})}
+                   options={teacherOptions}
+                   placeholder="— Select Teacher —"
+                   value={sectionForm.teacherId}
+                 />
+              </div>
+              {teacherWorkload !== null && <div style={{ color: "#fbbf24", fontSize: "11px", fontWeight: 700, marginBottom: "12px", marginTop: "4px" }}>Active Workload This Term: {teacherWorkload} Units</div>}
+
+              <div style={{ marginBottom: "12px", width: "100%" }}>
+                 <SearchableSelect
+                   emptyMessage="No rooms available."
+                   onAdd={() => setShowRoomModal(true)}
+                   onChange={(val: any) => setSectionForm({...sectionForm, roomId: val})}
+                   options={roomOptions}
+                   placeholder="— Select Room —"
+                   value={sectionForm.roomId}
+                 />
               </div>
 
-              <Sel onChange={(e) => setSectionForm({...sectionForm, teacherId: e.target.value})} style={{ marginBottom: "4px", width: "100%" }} value={sectionForm.teacherId}>
-                 <option value="">— Select Teacher —</option>
-                 {users.filter(u => u.role === "teacher").map(t => <option key={t._uuid} value={t._uuid}>{t.fullName}</option>)}
-              </Sel>
-              {teacherWorkload !== null && <div style={{ color: "#fbbf24", fontSize: "11px", fontWeight: 700, marginBottom: "12px" }}>Active Workload This Term: {teacherWorkload} Units</div>}
-
-              <Sel onChange={(e) => setSectionForm({...sectionForm, roomId: e.target.value})} style={{ marginBottom: "12px", width: "100%" }} value={sectionForm.roomId}>
-                 <option value="">— Select Room —</option>
-                 {rooms.map(r => <option key={r.room_id} value={r.room_id}>{r.room_name} (Max {r.capacity})</option>)}
-              </Sel>
-
               <div style={{ marginBottom: "12px" }}>
-                <Input list="schedule-options" onChange={(e) => setSectionForm({...sectionForm, scheduleLabel: e.target.value})} placeholder="Schedule (e.g. MWF 7:30 AM - 9:00 AM)" style={{ width: "100%" }} value={sectionForm.scheduleLabel} />
-                <datalist id="schedule-options">
-                  {schedules.map(s => <option key={s.id} value={s.schedule_label} />)}
-                </datalist>
+                 <SearchableSelect
+                   emptyMessage="No schedules available."
+                   onAdd={() => setShowScheduleModal(true)}
+                   onChange={(val: any) => setSectionForm({...sectionForm, scheduleLabel: val})}
+                   options={scheduleOptions}
+                   placeholder="— Select Schedule Block —"
+                   value={sectionForm.scheduleLabel}
+                 />
               </div>
 
               <div style={{ alignItems: "center", display: "flex", gap: "10px", marginBottom: "16px" }}>
-                <Input disabled={sectionForm.isUnlimited} onChange={(e) => setSectionForm({...sectionForm, maxCapacity: Number(e.target.value)})} placeholder="Max Capacity" style={{ width: "120px" }} type="number" value={sectionForm.maxCapacity} />
+                <Input disabled={sectionForm.isUnlimited} onChange={(e) => setSectionForm({...sectionForm, maxCapacity: Number(e.target.value)})} placeholder="Max Capacity" style={{ height: "38px", width: "120px" }} type="number" value={sectionForm.maxCapacity} />
                 <label style={{ alignItems: "center", color: "#f1f5f9", cursor: "pointer", display: "flex", fontSize: "13px", gap: "6px" }}>
                   <input checked={sectionForm.isUnlimited} onChange={e => setSectionForm({...sectionForm, isUnlimited: e.target.checked})} type="checkbox" />
                   No Limit
