@@ -44,12 +44,12 @@ const TIME_SLOTS = [
 ];
 
 const CSV_TEMPLATES = {
-  courses: "Course Code,Course Name,Units,Lec Hours,Lab Hours,Prerequisite Codes (comma separated)\nCS101,Intro to Computing,3,2,1,\nCS102,Data Structures,3,2,1,CS101\nCS103,Algorithms,3,3,0,\"CS101, CS102\"",
-  sections: "Course Code,Section Label,Semester,Year Level,Program Code,Room Name,Schedule Label,Max Capacity\nCS101,A,1st Semester,1st Year,BSCS,Rm 201,MWF 7:30 AM - 8:30 AM,40",
-  mappings: "Course Code,Program Code,Year Level,Semester\nCS101,BSCS,1st Year,1st Semester",
+  courses: "Course Code,Course Name,Total Units,Prerequisite Codes (comma separated)\nCS101-LEC,Intro to Computing (Lec),2,\nCS101-LAB,Intro to Computing (Lab),1,CS101-LEC",
+  sections: "Course Code,Section Label,Semester,Year Level,Program Code,Room Name,Schedule Label,Max Capacity,Teacher Display ID\nCS101-LEC,A,1st Semester,1st Year,BSCS,Rm 201,MWF 7:30 AM - 8:30 AM,40,TCH001",
+  mappings: "Course Code,Program Code,Year Level,Semester\nCS101-LEC,BSCS,1st Year,1st Semester",
   rooms: "Room Name,Capacity\nRm 201,40\nLab 1,30",
-  students_to_section: "Student ID\n2025-0001\n2025-0002",
-  global_enrollment: "Student ID,Course Code,Section Label\n2025-0001,CS101,A\n2025-0001,CS102,A\n2025-0002,CS101,B"
+  students_to_section: "Student ID\nSTU23-00001\nSTU23-00002",
+  global_enrollment: "Student ID,Course Code,Section Label\nSTU23-00001,CS101-LEC,A\nSTU23-00001,CS101-LAB,A"
 };
 
 export default function AdminCourseManagement({
@@ -102,7 +102,6 @@ export default function AdminCourseManagement({
   const [selMappingsForDelete, setSelMappingsForDelete] = useState<number[]>([]);
   const [selSectionsForDelete, setSelSectionsForDelete] = useState<string[]>([]);
   const [selStudents, setSelStudents] = useState<string[]>([]);
-  const [forceEnroll, setForceEnroll] = useState(false);
 
   const [codeSearch, setCodeSearch] = useState("");
   const [courseSearch, setCourseSearch] = useState("");
@@ -122,7 +121,7 @@ export default function AdminCourseManagement({
   const [offSort, setOffSort] = useState<SortState>({ field: "created_at", dir: "desc" });
   const [mapSort, setMapSort] = useState<SortState>({ field: "id", dir: "desc" });
 
-  const [courseForm, setCourseForm] = useState<{code: string, name: string, units: number, lec: number, lab: number, prereqs: string[]}>({ code: "", name: "", units: 3, lec: 3, lab: 0, prereqs: [] });
+  const [courseForm, setCourseForm] = useState<{code: string, name: string, units: number, prereqs: string[]}>({ code: "", name: "", units: 3, prereqs: [] });
   const [mappingForm, setMappingForm] = useState({ courseId: "", programId: "", yearLevel: "1st Year", semester: "1st Semester" });
   const [newRoomForm, setNewRoomForm] = useState({ name: "", capacity: 40 });
   const [newSchedDays, setNewSchedDays] = useState<string[]>([]);
@@ -143,6 +142,8 @@ export default function AdminCourseManagement({
   const [manualEnrollStudentId, setManualEnrollStudentId] = useState<string>("");
   const [manualEnrollSections, setManualEnrollSections] = useState<string[]>([]);
   const [manualEnrollSearch, setManualEnrollSearch] = useState("");
+
+  const [conflictModal, setConflictModal] = useState<{show: boolean, validIds: string[], conflicted: any[], forceIds: string[], courseId: string, sectionId: string}>({ show: false, validIds: [], conflicted: [], forceIds: [], courseId: "", sectionId: "" });
 
   const [loading, setLoading] = useState(false);
   const [newCodePrefix, setNewCodePrefix] = useState("");
@@ -252,13 +253,15 @@ export default function AdminCourseManagement({
   async function loadStudentsAPI(query: string) {
     setLoading(true);
     let q = supabase.from("students").select(`student_id, program_id, year_level, users!inner(user_id, full_name, display_id, is_active)`);
-    if (query) q = q.ilike("users.full_name", `%${query}%`);
+    if (query) {
+      q = q.or(`users.full_name.ilike.%${query}%,student_id.ilike.%${query}%,users.display_id.ilike.%${query}%`);
+    }
     const { data, error } = await q;
 
     if (!error && data) {
       const formatted = data.map((d: any) => ({
-        _uuid: d.student_id,
-        displayId: d.users?.display_id || "",
+        _uuid: d.users.user_id,
+        displayId: d.student_id || d.users?.display_id || "",
         fullName: d.users?.full_name || "Unknown",
         isActive: d.users?.is_active,
         programId: d.program_id,
@@ -296,14 +299,13 @@ export default function AdminCourseManagement({
   }
 
   async function loadAllCourses() {
-    const { data: rawCourses, error } = await supabase.from("courses").select("course_id, course_code, course_name, units, lec_hours, lab_hours, is_active").order("course_code", { ascending: true });
+    const { data: rawCourses, error } = await supabase.from("courses").select("course_id, course_code, course_name, units, is_active").order("course_code", { ascending: true });
     const { data: preData } = await supabase.from("course_prerequisites").select("course_id, courses!prereq_course_id(course_code)");
     
     if (!error) {
       const normalized = (rawCourses || []).map((course) => ({
         _uuid: course.course_id, code: course.course_code, id: course.course_code,
-        isActive: course.is_active, name: course.course_name, units: course.units,
-        lec_hours: course.lec_hours || 0, lab_hours: course.lab_hours || 0
+        isActive: course.is_active, name: course.course_name, units: course.units
       }));
       setAllCourses(normalized);
     }
@@ -344,7 +346,7 @@ export default function AdminCourseManagement({
   async function loadCoursesAPI() {
     if (!selCode) return;
     setLoading(true);
-    let q = supabase.from("courses").select("course_id, course_code, course_name, units, lec_hours, lab_hours, is_active").ilike("course_code", `${selCode}%`);
+    let q = supabase.from("courses").select("course_id, course_code, course_name, units, is_active").ilike("course_code", `${selCode}%`);
     if (courseSearch) q = q.or(`course_name.ilike.%${courseSearch}%,course_code.ilike.%${courseSearch}%`);
     q = q.order(courseSort.field, { ascending: courseSort.dir === "asc" });
     
@@ -352,8 +354,7 @@ export default function AdminCourseManagement({
     if (!error && data) {
       const normalized = data.map((course) => ({
         _uuid: course.course_id, code: course.course_code, id: course.course_code,
-        isActive: course.is_active, name: course.course_name, units: course.units,
-        lec_hours: course.lec_hours || 0, lab_hours: course.lab_hours || 0
+        isActive: course.is_active, name: course.course_name, units: course.units
       }));
       setCourses(normalized);
     }
@@ -428,7 +429,7 @@ export default function AdminCourseManagement({
 
   async function loadMappingsAPI() {
     setLoading(true);
-    let q = supabase.from("course_program_map").select("id, course_id, program_id, year_level, semester, effective_sy_id, courses!inner(course_code, course_name, units, lec_hours, lab_hours), program(name, code)");
+    let q = supabase.from("course_program_map").select("id, course_id, program_id, year_level, semester, effective_sy_id, courses!inner(course_code, course_name, units), program(name, code)");
     
     if (mapFilterCourse) q = q.eq("course_id", mapFilterCourse);
     if (mapFilterProg) q = q.eq("program_id", mapFilterProg);
@@ -444,8 +445,6 @@ export default function AdminCourseManagement({
         course_code: m.courses?.course_code,
         course_name: m.courses?.course_name,
         units: m.courses?.units || 0,
-        lec_hours: m.courses?.lec_hours || 0,
-        lab_hours: m.courses?.lab_hours || 0,
         program_code: m.program?.code
       }));
       setMappings(formatted);
@@ -526,8 +525,8 @@ export default function AdminCourseManagement({
     return data.map((d: any) => d.student_id);
   }
 
-  function downloadCSVTemplate(type: "courses" | "sections" | "mappings" | "rooms" | "students_to_section" | "global_enrollment") {
-    const content = CSV_TEMPLATES[type as keyof typeof CSV_TEMPLATES];
+  function downloadCSVTemplate(type: keyof typeof CSV_TEMPLATES) {
+    const content = CSV_TEMPLATES[type];
     const blob = new Blob([content], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -547,6 +546,30 @@ export default function AdminCourseManagement({
     a.href = url;
     a.download = filename;
     a.click();
+  }
+
+  async function processEnrollmentBatch(validIds: string[], forceIds: string[], cId: string, sId: string) {
+    setLoading(true);
+    let enrolledCount = 0, waitlistedCount = 0;
+    
+    for (const studentId of validIds) {
+      const status = await enrollStudent(studentId, cId, sId);
+      if (status === "Enrolled") enrolledCount++;
+      if (status === "Waitlisted") waitlistedCount++;
+    }
+    
+    for (const studentId of forceIds) {
+      await enrollStudent(studentId, cId, sId);
+      enrolledCount++;
+    }
+
+    setConflictModal({ show: false, validIds: [], conflicted: [], forceIds: [], courseId: "", sectionId: "" });
+    setSelStudents([]);
+    await loadCatalogSectionsAPI();
+    
+    if (waitlistedCount > 0) showToast(`${enrolledCount} enrolled, ${waitlistedCount} waitlisted due to capacity.`, "warning");
+    else showToast(`${enrolledCount} students successfully enrolled.`, "success");
+    setLoading(false);
   }
 
   async function handleStudentCSVImport(e: React.ChangeEvent<HTMLInputElement>) {
@@ -570,10 +593,9 @@ export default function AdminCourseManagement({
         return;
       }
 
-      const { data: matchedStudents } = await supabase.from("users")
-        .select("user_id, display_id")
-        .in("display_id", importedIds)
-        .eq("role", "student");
+      const { data: matchedStudents } = await supabase.from("students")
+        .select("user_id, student_id, users!inner(display_id, full_name)")
+        .or(`student_id.in.(${importedIds.join(",")}),users.display_id.in.(${importedIds.join(",")})`);
 
       if (!matchedStudents || matchedStudents.length === 0) {
         showToast("No matching students found.", "error");
@@ -581,28 +603,20 @@ export default function AdminCourseManagement({
         return;
       }
 
-      const validUuids = matchedStudents.map(s => s.user_id);
+      const validUuids = matchedStudents.map((s: any) => s.user_id);
       
-      let toEnroll = validUuids;
-      if (!forceEnroll) {
-        const conflictedIds = await checkStudentConflicts(validUuids, selSection.sy_id, selSection.semester, selSection.schedule_label);
-        if (conflictedIds.length > 0) {
-          showToast(`${conflictedIds.length} student(s) skipped due to schedule conflicts.`, "warning");
-          toEnroll = validUuids.filter(id => !conflictedIds.includes(id));
-        }
+      const conflictedIds = await checkStudentConflicts(validUuids, selSection.sy_id, selSection.semester, selSection.schedule_label);
+      if (conflictedIds.length > 0) {
+         const valid = validUuids.filter((id: string) => !conflictedIds.includes(id));
+         const confStudents = matchedStudents.filter((s: any) => conflictedIds.includes(s.user_id)).map((s: any) => ({
+             id: s.user_id,
+             display: s.student_id || s.users.display_id,
+             name: s.users.full_name
+         }));
+         setConflictModal({ show: true, validIds: valid, conflicted: confStudents, forceIds: [], courseId: selCourse._uuid, sectionId: selSection.section_id });
+      } else {
+         await processEnrollmentBatch(validUuids, [], selCourse._uuid, selSection.section_id);
       }
-
-      let enrolledCount = 0, waitlistedCount = 0;
-      for (const studentId of toEnroll) {
-        const status = await enrollStudent(studentId, selCourse._uuid, selSection.section_id);
-        if (status === "Enrolled" || forceEnroll) enrolledCount++;
-        if (status === "Waitlisted" && !forceEnroll) waitlistedCount++;
-      }
-      
-      await loadCatalogSectionsAPI();
-      if (waitlistedCount > 0) showToast(`${enrolledCount} enrolled, ${waitlistedCount} waitlisted due to capacity.`, "warning");
-      else showToast(`${enrolledCount} students successfully enrolled.`, "success");
-      
       setLoading(false);
     };
     reader.readAsText(file);
@@ -625,8 +639,13 @@ export default function AdminCourseManagement({
           if (validRows.length === 0) throw new Error("CSV is empty or missing required columns.");
 
           const displayIds = Array.from(new Set(validRows.map(r => r[0].trim())));
-          const { data: usersData } = await supabase.from("users").select("user_id, display_id").in("display_id", displayIds).eq("role", "student");
-          const userDict = (usersData || []).reduce((acc: any, u: any) => { acc[u.display_id] = u.user_id; return acc; }, {});
+          
+          const { data: usersData } = await supabase.from("students").select("user_id, student_id, users!inner(display_id)").or(`student_id.in.(${displayIds.join(",")}),users.display_id.in.(${displayIds.join(",")})`);
+          const userDict = (usersData || []).reduce((acc: any, u: any) => { 
+             acc[u.student_id] = u.user_id; 
+             acc[u.users.display_id] = u.user_id;
+             return acc; 
+          }, {});
 
           const courseCodes = Array.from(new Set(validRows.map(r => r[1].trim().toUpperCase())));
           const { data: sectionData } = await supabase.from("course_sections").select("section_id, section_label, course_id, courses!inner(course_code)").eq("sy_id", offFilterSy).eq("semester", offFilterSemester).in("courses.course_code", courseCodes);
@@ -661,11 +680,9 @@ export default function AdminCourseManagement({
               newCourses.push({
                 course_code: code,
                 course_name: csvRows[i][1].trim(),
-                units: Number(csvRows[i][2].trim()) || 3,
-                lec_hours: Number(csvRows[i][3]?.trim()) || 0,
-                lab_hours: Number(csvRows[i][4]?.trim()) || 0
+                units: Number(csvRows[i][2].trim()) || 3
               });
-              if (csvRows[i][5]) prereqMap[code] = csvRows[i][5].replace(/"/g, "").split(";").map(s => s.trim().toUpperCase());
+              if (csvRows[i][3]) prereqMap[code] = csvRows[i][3].replace(/"/g, "").split(";").map(s => s.trim().toUpperCase());
             }
           }
           if (newCourses.length > 0) {
@@ -732,6 +749,11 @@ export default function AdminCourseManagement({
           const courseDict = allCourses.reduce((acc, c) => { acc[c.code] = c._uuid; return acc; }, {});
           const roomDict = rooms.reduce((acc, r) => { acc[r.room_name] = r.room_id; return acc; }, {});
           const progDict = programs.reduce((acc, p) => { acc[p.code] = p.program_id; return acc; }, {});
+          
+          const tDisplayIds = Array.from(new Set(csvRows.slice(1).map(r => r[8]?.trim()).filter(Boolean)));
+          const { data: tData } = await supabase.from("users").select("user_id, display_id").in("display_id", tDisplayIds).eq("role", "teacher");
+          const tDict = (tData || []).reduce((acc: any, t: any) => { acc[t.display_id] = t.user_id; return acc; }, {});
+
           const newSections = [];
           let skipped = 0;
 
@@ -743,18 +765,20 @@ export default function AdminCourseManagement({
               const pId = progDict[csvRows[i][4].trim().toUpperCase()] || null;
               const rId = roomDict[csvRows[i][5].trim()] || null;
               const schedule = csvRows[i][6].trim();
+              const tId = tDict[csvRows[i][8]?.trim()] || null;
               
               let capValue: number | null = Number(csvRows[i][7]?.trim());
               if (isNaN(capValue) || csvRows[i][7]?.trim().toLowerCase() === "unlimited") capValue = null;
 
               if (cId && offFilterSy && semester) {
-                const hasConflict = await checkScheduleConflict(offFilterSy, semester, schedule, null, rId);
+                const hasConflict = await checkScheduleConflict(offFilterSy, semester, schedule, tId, rId);
                 if (hasConflict) { skipped++; continue; }
                 
                 newSections.push({
                   course_id: cId, section_label: csvRows[i][1].trim(), semester, room_id: rId,
                   year_level: yearLevel || "1st Year",
                   program_id: pId,
+                  teacher_id: tId,
                   schedule_label: schedule, max_capacity: capValue,
                   sy_id: offFilterSy
                 });
@@ -786,9 +810,7 @@ export default function AdminCourseManagement({
     const { data, error } = await supabase.from("courses").insert({ 
       course_code: courseForm.code.toUpperCase(), 
       course_name: courseForm.name, 
-      units: courseForm.units,
-      lec_hours: courseForm.lec,
-      lab_hours: courseForm.lab 
+      units: courseForm.units
     }).select("course_id").single();
 
     if (error) { showToast(error.message, "error"); return; }
@@ -803,7 +825,7 @@ export default function AdminCourseManagement({
 
     showToast("Course created successfully.", "success");
     setShowCreateCourseModal(false);
-    setCourseForm({ code: "", name: "", units: 3, lec: 3, lab: 0, prereqs: [] });
+    setCourseForm({ code: "", name: "", units: 3, lec: 0, lab: 0, prereqs: [] });
     await loadAllCourses();
     if (selCode) void loadCoursesAPI();
   }
@@ -868,14 +890,12 @@ export default function AdminCourseManagement({
     const { error } = await supabase.from("courses").update({ 
       course_code: courseForm.code.toUpperCase(), 
       course_name: courseForm.name, 
-      units: courseForm.units,
-      lec_hours: courseForm.lec,
-      lab_hours: courseForm.lab 
+      units: courseForm.units
     }).eq("course_id", selCourse._uuid);
     if (error) { showToast(error.message, "error"); return; }
     showToast("Course updated successfully.", "success");
     setShowEditCourseModal(false);
-    setSelCourse({ ...selCourse, code: courseForm.code.toUpperCase(), name: courseForm.name, units: courseForm.units, lec_hours: courseForm.lec, lab_hours: courseForm.lab });
+    setSelCourse({ ...selCourse, code: courseForm.code.toUpperCase(), name: courseForm.name, units: courseForm.units });
     await loadAllCourses();
     void loadCoursesAPI();
   }
@@ -1032,31 +1052,19 @@ export default function AdminCourseManagement({
   async function enrollStudents() {
     if (!selSection || selStudents.length === 0 || !selCourse?._uuid) return;
     
-    let toEnroll = selStudents;
+    const conflictedIds = await checkStudentConflicts(selStudents, selSection.sy_id, selSection.semester, selSection.schedule_label);
     
-    if (!forceEnroll) {
-      const conflictedIds = await checkStudentConflicts(selStudents, selSection.sy_id, selSection.semester, selSection.schedule_label);
-      if (conflictedIds.length > 0) {
-        showToast(`${conflictedIds.length} student(s) skipped due to schedule conflicts. Check 'Force Enroll' to bypass.`, "warning");
-        toEnroll = selStudents.filter(id => !conflictedIds.includes(id));
-      }
+    if (conflictedIds.length > 0) {
+      const valid = selStudents.filter(id => !conflictedIds.includes(id));
+      const confStudents = studentsList.filter(s => conflictedIds.includes(s._uuid)).map(s => ({
+          id: s._uuid,
+          display: s.displayId,
+          name: s.fullName
+      }));
+      setConflictModal({ show: true, validIds: valid, conflicted: confStudents, forceIds: [], courseId: selCourse._uuid, sectionId: selSection.section_id });
+    } else {
+      await processEnrollmentBatch(selStudents, [], selCourse._uuid, selSection.section_id);
     }
-
-    if (toEnroll.length === 0) {
-      setSelStudents([]);
-      return;
-    }
-
-    let enrolledCount = 0, waitlistedCount = 0;
-    for (const studentId of toEnroll) {
-      const status = await enrollStudent(studentId, selCourse._uuid, selSection.section_id);
-      if (status === "Enrolled" || forceEnroll) enrolledCount++;
-      if (status === "Waitlisted" && !forceEnroll) waitlistedCount++;
-    }
-    setSelStudents([]);
-    await loadCatalogSectionsAPI();
-    if (waitlistedCount > 0) showToast(`${enrolledCount} enrolled, ${waitlistedCount} waitlisted due to capacity.`, "warning");
-    else showToast(`${enrolledCount} students enrolled.`, "success");
   }
 
   async function executeManualMultiEnroll() {
@@ -1205,6 +1213,9 @@ export default function AdminCourseManagement({
     return groups;
   }, [mappings, selCurriculumProg]);
 
+  const teachersList = users.filter((u) => u.role === "teacher");
+  const enrolledStudentIds = new Set(selSection ? sectionEnrollments.filter((e) => e.section_id === selSection.section_id).map((e) => String(e.student_id)) : []);
+  
   const isTermLocked = useMemo(() => {
      return schoolYears.find(sy => sy.sy_id === offFilterSy)?.is_locked || false;
   }, [schoolYears, offFilterSy]);
@@ -1459,10 +1470,6 @@ export default function AdminCourseManagement({
               <div style={{ alignItems: "center", borderBottom: "1px solid #334155", display: "flex", gap: "8px", marginBottom: "8px", paddingBottom: "8px" }}>
                 <input checked={eligibleStudents.length > 0 && selStudents.length === eligibleStudents.length} onChange={(e) => setSelStudents(e.target.checked ? eligibleStudents.map(s=>String(s._uuid)) : [])} type="checkbox" />
                 <span style={{ color: "#94a3b8", fontSize: "12px", fontWeight: 700 }}>Select Eligible Students</span>
-                
-                <label style={{ alignItems: "center", color: "#f87171", cursor: "pointer", display: "flex", fontSize: "11px", fontWeight: 700, gap: "4px", marginLeft: "auto" }}>
-                  <input checked={forceEnroll} onChange={(e) => setForceEnroll(e.target.checked)} type="checkbox" /> Force Enroll
-                </label>
               </div>
 
               <div style={{ display: "flex", flex: 1, flexDirection: "column", gap: "8px", marginBottom: "16px", overflowY: "auto" }}>
@@ -1567,23 +1574,22 @@ export default function AdminCourseManagement({
                       <div style={{ color: "#f1f5f9", fontSize: "13px", fontWeight: 700, marginBottom: "8px", textAlign: "center" }}>1ST SEMESTER</div>
                       <table className="au-table">
                         <thead>
-                          <tr><th>Code</th><th>Description</th><th>Lec</th><th>Lab</th><th>Pre-req.</th></tr>
+                          <tr><th>Code</th><th>Description</th><th>Units</th><th>Pre-req.</th></tr>
                         </thead>
                         <tbody>
                           {s1.map((m: any) => (
                             <tr key={m.id}>
                               <td>{m.course_code}</td>
                               <td>{m.course_name}</td>
-                              <td>{m.lec_hours || 0}</td>
-                              <td>{m.lab_hours || 0}</td>
+                              <td>{m.units || 0}</td>
                               <td>{(globalPrereqs[m.course_id] || []).join(", ") || "None"}</td>
                             </tr>
                           ))}
                         </tbody>
                         <tfoot>
                           <tr>
-                            <td colSpan={4} style={{ fontWeight: "bold", textAlign: "right" }}>Total Units</td>
-                            <td style={{ fontWeight: "bold" }}>{s1Units}</td>
+                            <td colSpan={2} style={{ fontWeight: "bold", textAlign: "right" }}>Total Units</td>
+                            <td colSpan={2} style={{ fontWeight: "bold", textAlign: "left" }}>{s1Units}</td>
                           </tr>
                         </tfoot>
                       </table>
@@ -1593,23 +1599,22 @@ export default function AdminCourseManagement({
                       <div style={{ color: "#f1f5f9", fontSize: "13px", fontWeight: 700, marginBottom: "8px", textAlign: "center" }}>2ND SEMESTER</div>
                       <table className="au-table">
                         <thead>
-                          <tr><th>Code</th><th>Description</th><th>Lec</th><th>Lab</th><th>Pre-req.</th></tr>
+                          <tr><th>Code</th><th>Description</th><th>Units</th><th>Pre-req.</th></tr>
                         </thead>
                         <tbody>
                           {s2.map((m: any) => (
                             <tr key={m.id}>
                               <td>{m.course_code}</td>
                               <td>{m.course_name}</td>
-                              <td>{m.lec_hours || 0}</td>
-                              <td>{m.lab_hours || 0}</td>
+                              <td>{m.units || 0}</td>
                               <td>{(globalPrereqs[m.course_id] || []).join(", ") || "None"}</td>
                             </tr>
                           ))}
                         </tbody>
                         <tfoot>
                           <tr>
-                            <td colSpan={4} style={{ fontWeight: "bold", textAlign: "right" }}>Total Units</td>
-                            <td style={{ fontWeight: "bold" }}>{s2Units}</td>
+                            <td colSpan={2} style={{ fontWeight: "bold", textAlign: "right" }}>Total Units</td>
+                            <td colSpan={2} style={{ fontWeight: "bold", textAlign: "left" }}>{s2Units}</td>
                           </tr>
                         </tfoot>
                       </table>
@@ -1621,22 +1626,22 @@ export default function AdminCourseManagement({
                       <div style={{ color: "#f1f5f9", fontSize: "13px", fontWeight: 700, marginBottom: "8px", textAlign: "center" }}>SUMMER</div>
                       <table className="au-table">
                         <thead>
-                          <tr><th>Code</th><th>Lec</th><th>Lab</th><th>Pre-req.</th></tr>
+                          <tr><th>Code</th><th>Description</th><th>Units</th><th>Pre-req.</th></tr>
                         </thead>
                         <tbody>
                           {summer.map((m: any) => (
                             <tr key={m.id}>
                               <td>{m.course_code}</td>
-                              <td>{m.lec_hours || 0}</td>
-                              <td>{m.lab_hours || 0}</td>
+                              <td>{m.course_name}</td>
+                              <td>{m.units || 0}</td>
                               <td>{(globalPrereqs[m.course_id] || []).join(", ") || "None"}</td>
                             </tr>
                           ))}
                         </tbody>
                         <tfoot>
                           <tr>
-                            <td colSpan={3} style={{ fontWeight: "bold", textAlign: "right" }}>Total Units</td>
-                            <td style={{ fontWeight: "bold" }}>{sumUnits}</td>
+                            <td colSpan={2} style={{ fontWeight: "bold", textAlign: "right" }}>Total Units</td>
+                            <td colSpan={2} style={{ fontWeight: "bold", textAlign: "left" }}>{sumUnits}</td>
                           </tr>
                         </tfoot>
                       </table>
@@ -1659,6 +1664,50 @@ export default function AdminCourseManagement({
       </div>
 
       <div className="no-print">
+        {conflictModal.show && (
+          <div style={{ alignItems: "center", background: "rgba(0,0,0,0.7)", bottom: 0, display: "flex", justifyContent: "center", left: 0, position: "fixed", right: 0, top: 0, zIndex: 1000 }}>
+            <div style={{ background: "#1e293b", borderRadius: "8px", padding: "24px", width: "600px", display: "flex", flexDirection: "column", maxHeight: "80vh" }}>
+              <h3 style={{ color: "#f87171", margin: "0 0 8px 0" }}>Schedule Conflicts Detected</h3>
+              <p style={{ color: "#94a3b8", fontSize: "13px", marginBottom: "16px" }}>
+                The following students are already booked for a class at this time. Select any students below to <strong>Force Enroll</strong> them anyway.
+              </p>
+              
+              <div style={{ background: "#0f172a", border: "1px solid #334155", borderRadius: "8px", flex: 1, overflowY: "auto", padding: "16px" }}>
+                 <div style={{ borderBottom: "1px solid #334155", display: "flex", paddingBottom: "8px", marginBottom: "8px" }}>
+                    <input 
+                      type="checkbox" 
+                      checked={conflictModal.forceIds.length === conflictModal.conflicted.length && conflictModal.conflicted.length > 0}
+                      onChange={(e) => setConflictModal(prev => ({ ...prev, forceIds: e.target.checked ? prev.conflicted.map(c => c.id) : [] }))} 
+                    />
+                    <span style={{ color: "#f1f5f9", fontSize: "12px", fontWeight: 700, marginLeft: "12px" }}>Select All Conflicted</span>
+                 </div>
+                 {conflictModal.conflicted.map(c => (
+                   <label key={c.id} style={{ display: "flex", alignItems: "center", gap: "12px", padding: "8px 0", borderBottom: "1px solid #1e293b", cursor: "pointer" }}>
+                     <input 
+                       type="checkbox" 
+                       checked={conflictModal.forceIds.includes(c.id)}
+                       onChange={(e) => setConflictModal(prev => ({
+                         ...prev,
+                         forceIds: e.target.checked ? [...prev.forceIds, c.id] : prev.forceIds.filter(id => id !== c.id)
+                       }))}
+                     />
+                     <div style={{ color: "#e2e8f0", fontSize: "13px" }}>
+                       <strong>{c.display}</strong> — {c.name}
+                     </div>
+                   </label>
+                 ))}
+              </div>
+
+              <div style={{ display: "flex", gap: "8px", justifyContent: "flex-end", marginTop: "16px" }}>
+                <Btn onClick={() => setConflictModal({ show: false, validIds: [], conflicted: [], forceIds: [], courseId: "", sectionId: "" })} variant="secondary">Cancel Entire Batch</Btn>
+                <Btn onClick={() => processEnrollmentBatch(conflictModal.validIds, conflictModal.forceIds, conflictModal.courseId, conflictModal.sectionId)}>
+                  Enroll {conflictModal.validIds.length} Valid + {conflictModal.forceIds.length} Forced
+                </Btn>
+              </div>
+            </div>
+          </div>
+        )}
+
         {showFilterModal && (
           <div style={{ alignItems: "center", background: "rgba(0,0,0,0.5)", bottom: 0, display: "flex", justifyContent: "center", left: 0, position: "fixed", right: 0, top: 0, zIndex: 1000 }}>
             <div style={{ background: "#1e293b", borderRadius: "8px", padding: "24px", width: "450px" }}>
@@ -1706,17 +1755,20 @@ export default function AdminCourseManagement({
         {showManualEnrollModal && (
           <div style={{ alignItems: "center", background: "rgba(0,0,0,0.5)", bottom: 0, display: "flex", justifyContent: "center", left: 0, position: "fixed", right: 0, top: 0, zIndex: 1000 }}>
             <div style={{ background: "#1e293b", borderRadius: "8px", display: "flex", flexDirection: "column", maxHeight: "90vh", padding: "24px", width: "700px" }}>
-              <h3 style={{ color: "#f1f5f9", margin: "0 0 16px 0" }}>Manual Student Multi-Enrollment</h3>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+                <h3 style={{ color: "#f1f5f9", margin: 0 }}>Manual Student Multi-Enrollment</h3>
+                <Btn onClick={() => { setImportType("global_enrollments"); fileInputRef.current?.click(); }} size="sm" variant="secondary">Bulk Global Matrix CSV</Btn>
+              </div>
               
               <div style={{ background: "#0f172a", border: "1px solid #334155", borderRadius: "8px", marginBottom: "16px", padding: "16px" }}>
                 <div style={{ color: "#94a3b8", fontSize: "12px", fontWeight: 700, marginBottom: "8px" }}>STEP 1: Select Student</div>
                 <div style={{ display: "flex", gap: "8px" }}>
-                  <Input onChange={(e) => setManualEnrollSearch(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void loadStudentsAPI(manualEnrollSearch); }} placeholder="Search student name + Enter..." style={{ flex: 1 }} value={manualEnrollSearch} />
+                  <Input onChange={(e) => setManualEnrollSearch(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void loadStudentsAPI(manualEnrollSearch); }} placeholder="Search by Student ID or Name + Enter..." style={{ flex: 1 }} value={manualEnrollSearch} />
                 </div>
                 {studentsList.length > 0 && (
                   <Sel onChange={(e) => setManualEnrollStudentId(e.target.value)} style={{ marginTop: "8px", width: "100%" }} value={manualEnrollStudentId}>
                     <option value="">— Select a student —</option>
-                    {studentsList.map(s => <option key={s._uuid} value={s._uuid}>{s.fullName} ({programs.find(p => p.program_id === s.programId)?.code || "No Program"})</option>)}
+                    {studentsList.map(s => <option key={s._uuid} value={s._uuid}>{s.displayId} - {s.fullName} ({programs.find(p => p.program_id === s.programId)?.code || "No Program"})</option>)}
                   </Sel>
                 )}
               </div>
@@ -1733,7 +1785,7 @@ export default function AdminCourseManagement({
                         </div>
                      </label>
                    ))}
-                   {offerings.length === 0 && <div style={{ color: "#64748b", fontSize: "12px", textAlign: "center" }}>No offerings found. Adjust your filters.</div>}
+                   {offerings.length === 0 && <div style={{ color: "#64748b", fontSize: "12px", textAlign: "center" }}>No offerings found. Adjust your filters on the main screen.</div>}
                 </div>
               </div>
 
@@ -1885,12 +1937,10 @@ export default function AdminCourseManagement({
           <div style={{ alignItems: "center", background: "rgba(0,0,0,0.5)", bottom: 0, display: "flex", justifyContent: "center", left: 0, position: "fixed", right: 0, top: 0, zIndex: 1000 }}>
             <div style={{ background: "#1e293b", borderRadius: "8px", padding: "24px", width: "450px" }}>
               <h3 style={{ color: "#f1f5f9", margin: "0 0 16px 0" }}>Create Course</h3>
-              <Input onChange={(e) => setCourseForm({ ...courseForm, code: e.target.value })} placeholder="Course Code (e.g. CS101)" style={{ marginBottom: "12px" }} value={courseForm.code} />
+              <Input onChange={(e) => setCourseForm({ ...courseForm, code: e.target.value })} placeholder="Course Code (e.g. CS101-LEC)" style={{ marginBottom: "12px" }} value={courseForm.code} />
               <Input onChange={(e) => setCourseForm({ ...courseForm, name: e.target.value })} placeholder="Course Name" style={{ marginBottom: "12px" }} value={courseForm.name} />
-              <div style={{ display: "grid", gap: "10px", gridTemplateColumns: "1fr 1fr 1fr", marginBottom: "16px" }}>
+              <div style={{ display: "grid", gap: "10px", gridTemplateColumns: "1fr", marginBottom: "16px" }}>
                 <FF label="Total Units"><Input onChange={(e) => setCourseForm({ ...courseForm, units: Number(e.target.value) })} placeholder="Units" type="number" value={courseForm.units} /></FF>
-                <FF label="Lec Hrs"><Input onChange={(e) => setCourseForm({ ...courseForm, lec: Number(e.target.value) })} placeholder="Lec" type="number" value={courseForm.lec} /></FF>
-                <FF label="Lab Hrs"><Input onChange={(e) => setCourseForm({ ...courseForm, lab: Number(e.target.value) })} placeholder="Lab" type="number" value={courseForm.lab} /></FF>
               </div>
               
               <div style={{ borderTop: "1px solid #334155", marginBottom: "16px", paddingTop: "12px" }}>
@@ -1923,10 +1973,8 @@ export default function AdminCourseManagement({
               <h3 style={{ color: "#f1f5f9", margin: "0 0 16px 0" }}>Edit Course</h3>
               <Input onChange={(e) => setCourseForm({ ...courseForm, code: e.target.value })} placeholder="Course Code" style={{ marginBottom: "12px" }} value={courseForm.code} />
               <Input onChange={(e) => setCourseForm({ ...courseForm, name: e.target.value })} placeholder="Course Name" style={{ marginBottom: "12px" }} value={courseForm.name} />
-              <div style={{ display: "grid", gap: "10px", gridTemplateColumns: "1fr 1fr 1fr", marginBottom: "16px" }}>
+              <div style={{ display: "grid", gap: "10px", gridTemplateColumns: "1fr", marginBottom: "16px" }}>
                 <FF label="Total Units"><Input onChange={(e) => setCourseForm({ ...courseForm, units: Number(e.target.value) })} placeholder="Units" type="number" value={courseForm.units} /></FF>
-                <FF label="Lec Hrs"><Input onChange={(e) => setCourseForm({ ...courseForm, lec: Number(e.target.value) })} placeholder="Lec" type="number" value={courseForm.lec} /></FF>
-                <FF label="Lab Hrs"><Input onChange={(e) => setCourseForm({ ...courseForm, lab: Number(e.target.value) })} placeholder="Lab" type="number" value={courseForm.lab} /></FF>
               </div>
               <div style={{ display: "flex", gap: "8px", justifyContent: "flex-end" }}><Btn onClick={() => setShowEditCourseModal(false)} variant="secondary">Cancel</Btn><Btn onClick={handleEditCourse}>Update Course</Btn></div>
             </div>

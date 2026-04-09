@@ -17,12 +17,12 @@
  *   🔴/🟢 Deactivate / Reactivate from the left pane
  *   🔍 Filter grid by role
  */
-import React, { useState, useEffect } from "react";
-import { supabase } from "../../supabaseClient";
-import { programApi, userApi } from "../../lib/api";
-import { Badge, Btn, Input, Sel, FF, Toast } from "../../components/ui";
+import { useEffect, useState } from "react";
 import LMSGrid from "../../components/LMSGrid";
-import TopBar  from "../../components/TopBar";
+import TopBar from "../../components/TopBar";
+import { Badge, Btn, FF, Input, Sel } from "../../components/ui";
+import { programApi, userApi } from "../../lib/api";
+import { supabase } from "../../supabaseClient";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const CIVIL_STATUSES = ["Single", "Married", "Divorced", "Widowed"];
@@ -137,13 +137,33 @@ export default function AdminAccounts({ users, setUsers }) {
       setErrors({ password: "Could not hash password." }); return;
     }
 
-    const prefix = role === "student" ? "STU" : "TCH";
-    const { data: maxRow } = await supabase.from("users")
-      .select("display_id").eq("role", role)
-      .order("display_id", { ascending: false }).limit(1).maybeSingle();
-    const lastNum   = maxRow ? parseInt(maxRow.display_id.replace(/\D/g, ""), 10) : 0;
-    const nextNum   = (isNaN(lastNum) ? 0 : lastNum) + 1;
-    const displayId = `${prefix}${String(nextNum).padStart(3, "0")}`;
+    let displayId = "";
+    let studentId = "";
+
+    if (role === "student") {
+      // Generate STUYY-NNNNN
+      const currentYear = new Date().getFullYear();
+      const yy = String(currentYear).slice(-2);
+      const prefix = `STU${yy}-`;
+      
+      const { data: maxRow } = await supabase.from("students")
+        .select("student_id").ilike("student_id", `${prefix}%`)
+        .order("student_id", { ascending: false }).limit(1).maybeSingle();
+      
+      const lastNum = maxRow && maxRow.student_id ? parseInt(maxRow.student_id.replace(prefix, ""), 10) : 0;
+      const nextNum = (isNaN(lastNum) ? 0 : lastNum) + 1;
+      
+      studentId = `${prefix}${String(nextNum).padStart(5, "0")}`;
+      displayId = studentId; // Use this as the main display ID as well
+    } else {
+      // Standard Teacher Prefix
+      const { data: maxRow } = await supabase.from("users")
+        .select("display_id").eq("role", "teacher")
+        .order("display_id", { ascending: false }).limit(1).maybeSingle();
+      const lastNum = maxRow ? parseInt(maxRow.display_id.replace(/\D/g, ""), 10) : 0;
+      const nextNum = (isNaN(lastNum) ? 0 : lastNum) + 1;
+      displayId = `TCH${String(nextNum).padStart(3, "0")}`;
+    }
 
     const { data: newUserRow, error: userErr } = await supabase.from("users").insert({
       display_id:    displayId,
@@ -165,6 +185,7 @@ export default function AdminAccounts({ users, setUsers }) {
     if (role === "student") {
       const { error: stuErr } = await supabase.from("students").insert({
         user_id:    newUserRow.user_id,
+        student_id: studentId,
         year_level: form.yearLevel,
         semester:   form.semester,
         program_id: form.programId ? Number(form.programId) : null,
@@ -178,6 +199,7 @@ export default function AdminAccounts({ users, setUsers }) {
     const newUser = {
       _uuid:       newUserRow.user_id,
       id:          displayId,
+      student_id:  studentId || undefined,
       username:    form.username.trim(),
       fullName:    form.fullName.trim(),
       email:       form.email.trim(),
@@ -190,6 +212,7 @@ export default function AdminAccounts({ users, setUsers }) {
       programName,
       isActive:    true,
     };
+    
     setUsers(prev => [...prev, newUser]);
     setForm(emptyForm);
     setErrors({});
