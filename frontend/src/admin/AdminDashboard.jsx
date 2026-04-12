@@ -7,8 +7,6 @@ import ChatPage from "../components/ChatPage";
 import Dashboard from "../components/Dashboard";
 import Sidebar from "../components/Sidebar";
 import AdminAccounts from "./pages/AdminAccounts";
-import AdminBulkAccounts from "./pages/AdminBulkAccounts";
-import AdminBulkEnroll from "./pages/AdminBulkEnroll";
 import AdminCourseManagement from "./pages/AdminCourseManagement";
 import AdminOverview from "./pages/AdminOverview";
 import AdminPrograms from "./pages/AdminPrograms";
@@ -28,10 +26,8 @@ export default function AdminDashboard({ user, onLogout, users, setUsers, course
     { id: "accounts",     label: "Accounts",          icon: "👥", badge: studentTeacherCount },
     { id: "courses",      label: "Course Management", icon: "📚", badge: courses.length },
     { id: "programs",     label: "Programs",          icon: "🎓", badge: null },
-    { id: "bulk-enroll",  label: "Bulk Assign",       icon: "🎓", badge: null },
     { id: "terms",        label: "Term Settings",     icon: "📅", badge: null },
     { id: "chat",         label: "Chat",              icon: "💬", badge: null },
-    { id: "bulk-accounts", label: "Bulk Accounts", icon: "🧾", badge: null },
   ];
 
   const pages = {
@@ -41,10 +37,8 @@ export default function AdminDashboard({ user, onLogout, users, setUsers, course
     "accounts":    <AdminAccounts users={users} setUsers={setUsers} />,
     "courses":     <AdminCourseManagement courses={courses} setCourses={setCourses} users={users} enrollments={enrollments} setEnrollments={setEnrollments} />,
     "programs":    <AdminPrograms users={users} />,
-    "bulk-enroll": <AdminBulkEnroll users={users} courses={courses} enrollments={enrollments} setEnrollments={setEnrollments} />,
     "terms":       <AdminTermSettings user={user} />,
     "chat":        <ChatPage user={user} />,
-    "bulk-accounts": <AdminBulkAccounts setUsers={setUsers} />,
   };
 
   return (

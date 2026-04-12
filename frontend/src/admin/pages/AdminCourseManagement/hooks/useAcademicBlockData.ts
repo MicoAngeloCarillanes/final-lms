@@ -79,30 +79,95 @@ export function useAcademicBlockData(
     return { error };
   }
 
-  async function deleteBlock(blockId: string) {
+  async function deleteBlock(blockId: string, cascade: boolean = false) {
     setIsLoading(true);
+    
+    if (cascade) {
+      // First, unassign the block from course sections to satisfy FK constraint
+      const { error: unassignError } = await supabase
+        .from("course_sections")
+        .update({ block_id: null })
+        .eq("block_id", blockId);
+        
+      if (unassignError) {
+        setIsLoading(false);
+        return { error: unassignError };
+      }
+    }
+
     const { error } = await supabase.from("academic_blocks").delete().eq("block_id", blockId);
     if (!error) await fetchBlocks();
     setIsLoading(false);
     return { error };
   }
 
-  async function bulkDeleteBlocks(ids: string[]) {
+  async function bulkDeleteBlocks(ids: string[], cascade: boolean = false) {
     setIsLoading(true);
+
+    if (cascade) {
+        const { error: unassignError } = await supabase
+            .from("course_sections")
+            .update({ block_id: null })
+            .in("block_id", ids);
+        
+        if (unassignError) {
+            setIsLoading(false);
+            return { error: unassignError };
+        }
+    }
+
     const { error } = await supabase.from("academic_blocks").delete().in("block_id", ids);
     if (!error) await fetchBlocks();
     setIsLoading(false);
     return { error };
   }
 
-  async function fetchAllStudents() {
+  // --- NEW: Check Dependencies ---
+  async function checkBlockDependencies(blockIds: string[]) {
+    const { data, error } = await supabase
+        .from("course_sections")
+        .select("section_id, section_name, block_id, academic_blocks(block_name)")
+        .in("block_id", blockIds);
+    
+    if (error) {
+        console.error("Dependency Check Error:", error);
+        return [];
+    }
+    return data || [];
+  }
+
+  // Used strictly for manual assignment to prevent mismatched students from showing in the dropdown
+  async function fetchEligibleStudents(programId: number, yearLevel: string) {
     const { data, error } = await supabase
       .from("students")
-      .select("user_id, student_id, block_id, users!inner(full_name, email)");
-    if (error) console.error("Error fetching students:", error);
+      .select("user_id, student_id, block_id, program_id, year_level, users!inner(full_name, email)")
+      .eq("program_id", programId)     
+      .eq("year_level", yearLevel)     
+      .is("block_id", null);           
+
+    if (error) console.error("Error fetching eligible students:", error);
+    
     return (data || []).map((s: any) => ({
       user_id: s.user_id,
       student_id: s.student_id,
+      full_name: s.users?.full_name,
+      email: s.users?.email
+    }));
+  }
+
+  // Used for Bulk CSV validation so we can check any student against any block
+  async function fetchAllStudents() {
+    const { data, error } = await supabase
+      .from("students")
+      .select("user_id, student_id, block_id, program_id, year_level, users!inner(full_name, email)");
+      
+    if (error) console.error("Error fetching all students:", error);
+    
+    return (data || []).map((s: any) => ({
+      user_id: s.user_id,
+      student_id: s.student_id,
+      program_id: s.program_id, 
+      year_level: s.year_level, 
       block_id: s.block_id,
       full_name: s.users?.full_name,
       email: s.users?.email
@@ -150,6 +215,7 @@ export function useAcademicBlockData(
 
   return {
     blocks, bulkDeleteBlocks, deleteBlock, isLoading, refreshBlocks: fetchBlocks, 
-    saveBlock, fetchAllStudents, fetchStudentsByBlock, assignStudentsToBlock, unassignStudents
+    saveBlock, fetchEligibleStudents, fetchAllStudents, fetchStudentsByBlock, 
+    assignStudentsToBlock, unassignStudents, checkBlockDependencies
   };
 }

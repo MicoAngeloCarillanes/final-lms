@@ -45,15 +45,20 @@ export function BlocksTab() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  
+  // Advanced Delete Modal State
   const [confirmModal, setConfirmModal] = useState<{
     show: boolean;
     type: 'delete' | 'bulkDelete';
     id?: string;
+    isCascadeWarning?: boolean;
+    dependencies?: any[];
   }>({ show: false, type: 'delete' });
 
   const { 
     blocks, isLoading, deleteBlock, bulkDeleteBlocks, refreshBlocks,
-    fetchAllStudents, fetchStudentsByBlock, assignStudentsToBlock, unassignStudents
+    fetchAllStudents, fetchEligibleStudents, fetchStudentsByBlock, assignStudentsToBlock, unassignStudents,
+    checkBlockDependencies
   } = useAcademicBlockData(search, activeProgram, activeYear, sortConfig.field, sortConfig.dir);
 
   function handleOpenModal(block?: any) {
@@ -66,16 +71,38 @@ export function BlocksTab() {
     else setSelectedIds(blocks.map(b => b.block_id));
   }
 
-  async function handleConfirmAction() {
+  async function handleConfirmAction(forceCascade = false) {
     const actionType = confirmModal.type;
     const targetId = confirmModal.id;
+    let resError = null;
 
     if (actionType === 'delete' && targetId) {
-      await deleteBlock(targetId);
+      const { error } = await deleteBlock(targetId, forceCascade);
+      resError = error;
     } else if (actionType === 'bulkDelete') {
-      await bulkDeleteBlocks(selectedIds);
-      setSelectedIds([]);
+      const { error } = await bulkDeleteBlocks(selectedIds, forceCascade);
+      if (!error) setSelectedIds([]);
+      resError = error;
     }
+
+    if (resError) {
+      if (resError.code === '23503') {
+        // FK Violation Caught! Fetch dependencies and show warning
+        const idsToCheck = actionType === 'delete' && targetId ? [targetId] : selectedIds;
+        const deps = await checkBlockDependencies(idsToCheck);
+        
+        setConfirmModal(prev => ({
+          ...prev,
+          isCascadeWarning: true,
+          dependencies: deps
+        }));
+        return; // Halt here and wait for user input
+      } else {
+        alert("An error occurred during deletion: " + resError.message);
+      }
+    }
+    
+    // If successful (or cancelled)
     setConfirmModal({ show: false, type: 'delete' });
   }
 
@@ -98,6 +125,17 @@ export function BlocksTab() {
     setActiveYear("");
     setActiveProgram("");
     setIsFilterOpen(false);
+  }
+
+  function downloadBlockTemplate() {
+    const headers = "program_code,year_level,capacity\nBSCS,1st Year,40\nBSIT,2nd Year,";
+    const blob = new Blob([headers], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement("a");
+    link.setAttribute("href", URL.createObjectURL(blob));
+    link.setAttribute("download", "Bulk_Blocks_Template.csv");
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   }
 
   async function handleCsvUpload(e: React.ChangeEvent<HTMLInputElement>) {
@@ -254,13 +292,12 @@ export function BlocksTab() {
         </div>
       )}
 
-      {/* Other Modals (CSV, Assign, Details, Confirmation, Setup) */}
       {isCsvModalOpen && (
         <div style={{ alignItems: "center", background: "rgba(0,0,0,0.5)", bottom: 0, display: "flex", justifyContent: "center", left: 0, position: "fixed", right: 0, top: 0, zIndex: 1100 }}>
           <div style={{ background: "#1e293b", borderRadius: "8px", padding: "24px", width: "400px" }}>
             <h3 style={{ color: "#f1f5f9", margin: "0 0 16px 0" }}>Bulk Create Blocks</h3>
             <p style={{ color: "#94a3b8", fontSize: "13px", marginBottom: "20px" }}>Upload CSV with Program Code and Year Level.</p>
-            <Btn size="sm" variant="secondary" onClick={() => {}} style={{ marginBottom: "16px" }}>Download Template</Btn>
+            <Btn size="sm" variant="secondary" onClick={downloadBlockTemplate} style={{ marginBottom: "16px" }}>Download Template</Btn>
             <input type="file" accept=".csv" ref={fileInputRef} style={{ display: "none" }} onChange={handleCsvUpload} />
             <div style={{ display: "flex", gap: "8px", justifyContent: "flex-end" }}>
               <Btn onClick={() => setIsCsvModalOpen(false)} variant="secondary">Cancel</Btn>
@@ -270,16 +307,50 @@ export function BlocksTab() {
         </div>
       )}
 
-      {isAssignModalOpen && <AssignStudentModal blocks={blocks} onClose={() => setIsAssignModalOpen(false)} onAssign={assignStudentsToBlock} fetchAllStudents={fetchAllStudents} />}
+      {isAssignModalOpen && <AssignStudentModal blocks={blocks} onClose={() => setIsAssignModalOpen(false)} onAssign={assignStudentsToBlock} fetchAllStudents={fetchAllStudents} fetchEligibleStudents={fetchEligibleStudents} />}
       {detailsBlock && <BlockDetailsModal block={detailsBlock} onClose={() => setDetailsBlock(null)} fetchStudentsByBlock={fetchStudentsByBlock} unassignStudents={unassignStudents} />}
+      
+      {/* Enhanced Delete Confirmation Modal */}
       {confirmModal.show && (
         <div style={{ alignItems: "center", background: "rgba(0,0,0,0.8)", bottom: 0, display: "flex", justifyContent: "center", left: 0, position: "fixed", right: 0, top: 0, zIndex: 1100 }}>
-          <div style={{ background: "#1e293b", borderRadius: "8px", padding: "24px", width: "350px", textAlign: "center" }}>
-            <h4 style={{ color: "#f1f5f9", marginBottom: "12px" }}>Confirm Deletion</h4>
-            <div style={{ display: "flex", gap: "8px", justifyContent: "center" }}><Btn onClick={() => setConfirmModal({ show: false, type: 'delete' })} variant="secondary">Cancel</Btn><Btn onClick={handleConfirmAction} variant="danger">Delete</Btn></div>
+          <div style={{ background: "#1e293b", borderRadius: "8px", padding: "24px", width: confirmModal.isCascadeWarning ? "450px" : "350px", textAlign: "left" }}>
+            
+            {!confirmModal.isCascadeWarning ? (
+                <>
+                    <h4 style={{ color: "#f1f5f9", marginBottom: "12px", textAlign: "center" }}>Confirm Deletion</h4>
+                    <p style={{ color: "#94a3b8", fontSize: "13px", textAlign: "center", marginBottom: "20px" }}>Are you sure you want to delete the selected block(s)?</p>
+                    <div style={{ display: "flex", gap: "8px", justifyContent: "center" }}>
+                        <Btn onClick={() => setConfirmModal({ show: false, type: 'delete' })} variant="secondary">Cancel</Btn>
+                        <Btn onClick={() => handleConfirmAction(false)} variant="danger">Delete</Btn>
+                    </div>
+                </>
+            ) : (
+                <>
+                    <h4 style={{ color: "#ef4444", marginBottom: "12px" }}>⚠️ Cannot Delete: Block is in use</h4>
+                    <p style={{ color: "#cbd5e1", fontSize: "13px", marginBottom: "16px" }}>
+                        The following block(s) are currently assigned to active course sections. Deleting them will unassign the blocks from these sections.
+                    </p>
+                    
+                    <div style={{ background: "#0f172a", borderRadius: "6px", padding: "10px", maxHeight: "150px", overflowY: "auto", border: "1px solid #334155", marginBottom: "20px" }}>
+                        {confirmModal.dependencies?.map((dep: any, idx: number) => (
+                            <div key={idx} style={{ fontSize: "12px", color: "#94a3b8", marginBottom: "6px", paddingBottom: "6px", borderBottom: "1px dashed #334155" }}>
+                                <strong style={{ color: "#f1f5f9" }}>{dep.academic_blocks?.block_name}</strong> is used in: <br/>
+                                <span style={{ color: "#6366f1" }}>{dep.section_name}</span>
+                            </div>
+                        ))}
+                    </div>
+
+                    <div style={{ display: "flex", gap: "8px", justifyContent: "flex-end" }}>
+                        <Btn onClick={() => setConfirmModal({ show: false, type: 'delete' })} variant="secondary">Cancel</Btn>
+                        <Btn onClick={() => handleConfirmAction(true)} variant="danger">Force Delete (Unassign First)</Btn>
+                    </div>
+                </>
+            )}
+
           </div>
         </div>
       )}
+
       {showModal && <BlockSetupModal initialData={editingBlock} onClose={() => setShowModal(false)} onSave={refreshBlocks} />}
     </div>
   );
