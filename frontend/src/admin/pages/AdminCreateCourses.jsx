@@ -1,10 +1,10 @@
-import React, { useState } from "react";
-import { supabase } from "../../supabaseClient";
-import { gradeColor } from "../../lib/helpers";
-import { Badge, Btn, Input, Sel, FF, Card, Toast } from "../../components/ui";
+import { useState } from "react";
 import LMSGrid from "../../components/LMSGrid";
-import TopBar  from "../../components/TopBar";
-import TabBar  from "../../components/TabBar";
+import TabBar from "../../components/TabBar";
+import TopBar from "../../components/TopBar";
+import { Badge, Btn, Card, FF, Input, Sel, Toast } from "../../components/ui";
+import { gradeColor } from "../../lib/helpers";
+import { supabase } from "../../supabaseClient";
 
 export default function AdminCreateCourses({ courses, setCourses, users, enrollments: enrollmentsProp, setEnrollments }) {
   const teachers  = users.filter(u => u.role === "teacher");
@@ -206,13 +206,24 @@ export default function AdminCreateCourses({ courses, setCourses, users, enrollm
 
   // ── clearCourseData ───────────────────────────────────────────────────────────
   const clearCourseData = async (course) => {
-    const [matErr, examErr, enrollErr] = await Promise.all([
+    // 1. Fetch section IDs to properly delete students from section_assignments
+    const { data: sections } = await supabase.from("course_sections").select("section_id").eq("course_id", course._uuid);
+    const sectionIds = sections?.map(s => s.section_id) || [];
+
+    const promises = [
       supabase.from("materials").delete().eq("course_id", course._uuid).then(r => r.error),
       supabase.from("exams").delete().eq("course_id", course._uuid).then(r => r.error),
-      supabase.from("student_course_assignments").delete().eq("course_id", course._uuid).then(r => r.error),
-    ]);
+    ];
+
+    if (sectionIds.length > 0) {
+      promises.push(supabase.from("student_section_assignments").delete().in("section_id", sectionIds).then(r => r.error));
+    }
+
+    const [matErr, examErr, enrollErr] = await Promise.all(promises);
     await supabase.from("teacher_course_assignments").delete().eq("course_id", course._uuid);
+    
     if (matErr || examErr || enrollErr) { showToast("Partial error clearing data."); return; }
+    
     setEnrollments(prev => prev.filter(e => e.courseId !== course.id));
     setCourses(prev => prev.map(c =>
       c._uuid === course._uuid ? { ...c, teacher: "", teacherName: "Unassigned" } : c

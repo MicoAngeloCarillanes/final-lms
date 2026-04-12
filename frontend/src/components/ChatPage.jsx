@@ -3,16 +3,16 @@
  * FOLDER: src/components/ChatPage.jsx
  *
  * Channel visibility rules:
- *   🏫 faculty-room   → Admin + Sub-Admin + All Teachers
- *   🛡️ admin-desk     → Admin + Sub-Admin only
- *   💬 student-lounge → Admin + All Students
- *   🏛️ dept:{slug}    → Admin + that dept's Sub-Admin + dept teachers + enrolled students
- *   📚 course:{CODE}  → Admin + course teacher + enrolled students
+ * 🏫 faculty-room   → Admin + Sub-Admin + All Teachers
+ * 🛡️ admin-desk     → Admin + Sub-Admin only
+ * 💬 student-lounge → Admin + All Students
+ * 🏛️ dept:{slug}    → Admin + that dept's Sub-Admin + dept teachers + enrolled students
+ * 📚 course:{CODE}  → Admin + course teacher + enrolled students
  *
  * DM Search: within a course channel, search members → send a targeted
  * message; recipient gets an Accept/Reject prompt before it's visible.
  */
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "../supabaseClient";
 import TopBar from "./TopBar";
 import { Btn } from "./ui";
@@ -387,12 +387,21 @@ export default function ChatPage({ user, courses = [], enrollments = [] }) {
       // Get the course UUID
       const { data: courseRow } = await supabase.from("courses").select("course_id").eq("course_code", code).maybeSingle();
       if (courseRow) {
-        // Enrolled students
-        const { data: stuEnroll } = await supabase
-          .from("student_course_assignments")
-          .select("student_id, users!student_id(user_id, full_name, role, display_id)")
-          .eq("course_id", courseRow.course_id)
-          .eq("enrollment_status", "Enrolled");
+        // Get section IDs
+        const { data: sections } = await supabase.from("course_sections").select("section_id").eq("course_id", courseRow.course_id);
+        const sectionIds = sections ? sections.map(s => s.section_id) : [];
+
+        // Enrolled students via section assignments
+        let stuEnroll = [];
+        if (sectionIds.length > 0) {
+          const { data } = await supabase
+            .from("student_section_assignments")
+            .select("student_id, users!student_id(user_id, full_name, role, display_id)")
+            .in("section_id", sectionIds)
+            .eq("enrollment_status", "Enrolled");
+          stuEnroll = data || [];
+        }
+
         // Teacher
         const { data: tchAssign } = await supabase
           .from("teacher_course_assignments")

@@ -58,10 +58,21 @@ export const useCourseStore = create<CourseStoreState>((set) => ({
   updateCompletionStatus: async (studentId, courseId, status) => {
     set({ isLoading: true });
 
-    const { error } = await supabase
-      .from('student_course_assignments')
-      .update({ completion_status: status })
-      .match({ student_id: studentId, course_id: courseId });
+    // 1. Resolve section_id(s) linked to this course
+    const { data: sections } = await supabase.from('course_sections').select('section_id').eq('course_id', courseId);
+    const sectionIds = sections?.map((s: any) => s.section_id) || [];
+
+    let error = null;
+
+    if (sectionIds.length > 0) {
+      // 2. Update completion status in the new section assignments table
+      const res = await supabase
+        .from('student_section_assignments')
+        .update({ completion_status: status })
+        .in('section_id', sectionIds)
+        .eq('student_id', studentId);
+      error = res.error;
+    }
 
     set({ isLoading: false });
 

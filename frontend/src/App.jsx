@@ -3,21 +3,21 @@
  * FOLDER: src/App.jsx  (replace existing)
  *
  * Changes:
- *  - After sub_admin login, fetches their scope from the sub_admins table
- *    and attaches it as user.subAdminScope before rendering SubAdminDashboard.
- *    scope === "department" → full access (accounts, password reset, announcements, chat)
- *    any other scope       → restricted access (announcements + chat only)
+ * - After sub_admin login, fetches their scope from the sub_admins table
+ * and attaches it as user.subAdminScope before rendering SubAdminDashboard.
+ * scope === "department" → full access (accounts, password reset, announcements, chat)
+ * any other scope       → restricted access (announcements + chat only)
  */
-import React, { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
 import "./App.css";
-import { supabase } from "./supabaseClient";
 import { normalizeUser } from "./lib/normalizers";
+import { supabase } from "./supabaseClient";
 
-import LoginPage         from "./LoginPage";
-import AdminDashboard    from "./admin/AdminDashboard";
+import LoginPage from "./LoginPage";
+import AdminDashboard from "./admin/AdminDashboard";
+import StudentDashboard from "./student/StudentDashboard";
 import SubAdminDashboard from "./sub-admin/SubAdminDashboard";
-import StudentDashboard  from "./student/StudentDashboard";
-import TeacherDashboard  from "./teacher/TeacherDashboard";
+import TeacherDashboard from "./teacher/TeacherDashboard";
 
 export default function App() {
   const [currentUser,     setCurrentUser]     = useState(null);
@@ -147,10 +147,7 @@ export default function App() {
     loadCourses();
   }, []);
 
-    // ── Load enrollments ─────────────────────────────────────────────────────────
-  // Merges both sources:
-  //   • student_course_assignments  — legacy direct enrollments
-  //   • student_section_enrollments — new section-based enrollments (via course_sections)
+  // ── Load enrollments ─────────────────────────────────────────────────────────
   useEffect(() => {
     async function loadEnrollments() {
       // Shared lookup maps
@@ -163,21 +160,9 @@ export default function App() {
       (uRes.data || []).forEach(u => { uMap[u.user_id] = u.display_id; });
       (cRes.data || []).forEach(c => { cMap[c.course_id] = c.course_code; });
 
-      // 1. Legacy enrollments
-      const { data: legacyData } = await supabase
-        .from("student_course_assignments")
-        .select("student_id, course_id, final_grade, enrollment_status");
-
-      const legacyRows = (legacyData || []).map(row => ({
-        studentId: uMap[row.student_id] || row.student_id,
-        courseId:  cMap[row.course_id]  || row.course_id,
-        grade:     row.final_grade      ?? null,
-        status:    row.enrollment_status || "Enrolled",
-      }));
-
-      // 2. New section-based enrollments
+      // Consolidated new section-based enrollments
       const { data: sseData } = await supabase
-        .from("student_section_enrollments")
+        .from("student_section_assignments")
         .select("student_id, section_id, final_grade, enrollment_status");
 
       let sectionRows = [];
@@ -202,10 +187,10 @@ export default function App() {
         }).filter(r => r.courseId);
       }
 
-      // 3. Merge, deduplicate — section enrollment wins over legacy
+      // Deduplicate the results
       const seen = new Set();
       const merged = [];
-      for (const row of [...sectionRows, ...legacyRows]) {
+      for (const row of sectionRows) {
         const key = row.studentId + "__" + row.courseId;
         if (!seen.has(key)) { seen.add(key); merged.push(row); }
       }

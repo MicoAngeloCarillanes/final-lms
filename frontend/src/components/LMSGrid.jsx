@@ -8,15 +8,14 @@ export default function LMSGrid({
   pageSize = 12, 
   selectedId, 
   onSortChange,
-  sortField, // Optional: Controlled sort field
-  sortDir    // Optional: Controlled sort direction ("asc" | "desc")
+  sortField, 
+  sortDir    
 }) {
   const [q,    setQ]    = useState("");
   const [sc,   setSc]   = useState(null);
   const [dir,  setDir]  = useState("asc");
   const [page, setPage] = useState(0);
 
-  // If the parent provides sortField/sortDir, use them. Otherwise, fallback to internal state.
   const activeSc = sortField !== undefined ? sortField : sc;
   const activeDir = sortDir !== undefined ? sortDir : dir;
 
@@ -27,33 +26,29 @@ export default function LMSGrid({
   }, [rowData, q]);
 
   const sorted = useMemo(() => {
-    if (!activeSc) return filtered;
+    // FIX: If parent handles sorting (API mode), do not perform internal JS sorting
+    if (!activeSc || onSortChange) return filtered;
+    
     return [...filtered].sort((a, b) => {
       const va = a[activeSc] ?? "", vb = b[activeSc] ?? "";
       return (activeDir === "asc" ? 1 : -1) * String(va).localeCompare(String(vb), undefined, { numeric: true });
     });
-  }, [filtered, activeSc, activeDir]);
+  }, [filtered, activeSc, activeDir, onSortChange]);
 
   const total = Math.max(1, Math.ceil(sorted.length / pageSize));
   const rows  = sorted.slice(page * pageSize, (page + 1) * pageSize);
 
   const toggleSort = (f) => {
-    // Calculate the new direction based on the currently active state
     const newDir = (activeSc === f && activeDir === "asc") ? "desc" : "asc";
-    
-    // Safely fire the parent's API trigger ONLY if it exists (protects old tables)
     if (onSortChange) {
       onSortChange(f, newDir);
     }
-    
-    // Always update internal state as a fallback for uncontrolled tables
     setSc(f);
     setDir(newDir);
   };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height, border: "1px solid #1e293b", borderRadius: 8, overflow: "hidden", background: "#0f172a" }}>
-      {/* Table */}
+    <div style={{ display: "flex", flexDirection: "column", height: '100%', border: "1px solid #1e293b", borderRadius: 8, overflow: "hidden", background: "#0f172a", flex: 1 }}>
       <div style={{ flex: 1, overflow: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
           <thead style={{ position: "sticky", top: 0, zIndex: 1 }}>
@@ -62,7 +57,7 @@ export default function LMSGrid({
                 <th key={col.field + col.header} onClick={() => col.sortable !== false && toggleSort(col.field)}
                   style={{ padding: "9px 12px", textAlign: "left", fontWeight: 700, fontSize: 10, letterSpacing: "0.07em", textTransform: "uppercase", color: "#94a3b8", background: "#1e293b", borderBottom: "1px solid #1e293b", cursor: col.sortable !== false ? "pointer" : "default", userSelect: "none", whiteSpace: "nowrap", width: col.width || "auto" }}>
                   <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                    {col.header}
+                    {col.headerRenderer ? col.headerRenderer() : col.header}
                     {activeSc === col.field && <span style={{ color: "#6366f1" }}>{activeDir === "asc" ? "↑" : "↓"}</span>}
                   </span>
                 </th>
@@ -93,8 +88,7 @@ export default function LMSGrid({
         </table>
       </div>
 
-      {/* Pagination */}
-      <div style={{ padding: "7px 12px", borderTop: "1px solid #1e293b", display: "flex", alignItems: "center", justifyContent: "space-between", background: "#1e293b", flexShrink: 0 }}>
+      <div style={{ padding: "7px 12px", borderTop: "1px solid #1e293b", display: "flex", alignItems: "center", justifyContent: "space-between", background: "#1e293b", flexShrink: 0, marginTop: 'auto' }}>
         <span style={{ fontSize: 11, color: "#475569" }}>Page {page + 1} of {total} · {sorted.length} total</span>
         <div style={{ display: "flex", gap: 3 }}>
           {[["«", 0], ["‹", page - 1], ["›", page + 1], ["»", total - 1]].map(([lbl, tgt]) => {
