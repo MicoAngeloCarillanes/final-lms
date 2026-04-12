@@ -126,6 +126,29 @@ export default function SectionSetupModal({
         }
 
         if (!res.error) {
+            // ── Sync teacher assignment so the teacher's dashboard reflects this change ──
+            // App.jsx resolves a course's assigned teacher from `teacher_course_assignments`,
+            // NOT from `course_sections.teacher_id`. We must keep both in sync.
+            for (const section of payload) {
+                if (!section.teacher_id || !section.course_id) continue;
+
+                // Remove any prior assignment for this course, then insert the new one.
+                // Using upsert on (course_id, teacher_id) won't work if the teacher changed,
+                // so we delete-then-insert to guarantee only the latest teacher is reflected.
+                await supabase
+                    .from("teacher_course_assignments")
+                    .delete()
+                    .eq("course_id", section.course_id);
+
+                await supabase
+                    .from("teacher_course_assignments")
+                    .insert({
+                        course_id:   section.course_id,
+                        teacher_id:  section.teacher_id,
+                        assigned_at: new Date().toISOString(),
+                    });
+            }
+
             onSave();
             onClose();
         } else {

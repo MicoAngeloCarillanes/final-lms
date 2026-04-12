@@ -361,8 +361,9 @@ function GradesTab({ course, user, examSubmissions }) {
   const termData = {};
   EXAM_TERMS.forEach(term => {
     const cwMats = allMaterials.filter(m => m.course_id === course._uuid && m.term === term && (m.material_type === "Lab" || m.material_type === "Assignment"));
-    const cwSubs = cwMats.map(m => { const w = workSubs.find(w => w.material_id === m.material_id); return w ? w.score : null; }).filter(x => x != null);
-    const cw = cwSubs.length > 0 ? Math.round(cwSubs.reduce((a, b) => a + b, 0) / cwSubs.length) : null;
+    // Unsubmitted assignments count as 0 — denominator is always number of materials
+    const cwScores = cwMats.map(m => { const w = workSubs.find(w => w.material_id === m.material_id); return w ? w.score : 0; });
+    const cw = cwMats.length > 0 ? Math.round(cwScores.reduce((a, b) => a + b, 0) / cwMats.length) : null;
     const cwDetail = cwMats.map(m => ({ title: m.title, score: workSubs.find(w => w.material_id === m.material_id)?.score ?? null }));
 
     const csEntry = classStandings.find(cs => cs.courseUuid === course._uuid && cs.term === term) || null;
@@ -372,15 +373,18 @@ function GradesTab({ course, user, examSubmissions }) {
     const subs      = examSubmissions.filter(s => s.studentId === user.id && s.courseId === course.id);
     const examOnly  = termExams.filter(ex => (ex.examType || "Exam") === "Exam");
     const quizOnly  = termExams.filter(ex => ex.examType === "Quiz");
-    const toAvg     = arr => { const p = arr.map(ex => { const s = subs.find(s => s.examId === ex.id); return s ? Math.round((s.score / s.totalPoints) * 100) : null; }).filter(x => x != null); return p.length ? Math.round(p.reduce((a, b) => a + b, 0) / p.length) : null; };
+    // Untaken exams count as 0 — denominator is always number of exams
+    const toAvg     = arr => { if (!arr.length) return null; const p = arr.map(ex => { const s = subs.find(s => s.examId === ex.id); return s ? Math.round((s.score / s.totalPoints) * 100) : 0; }); return Math.round(p.reduce((a, b) => a + b, 0) / p.length); };
     const exam = toAvg(examOnly);
     const quiz = toAvg(quizOnly);
     const examDetail = termExams.map(ex => { const s = subs.find(s => s.examId === ex.id); return { title: ex.title, examType: ex.examType || "Exam", pct: s ? Math.round((s.score / s.totalPoints) * 100) : null, score: s?.score ?? null, total: ex.totalPoints }; });
     termData[term] = { cw, cwDetail, csEntry, cs, exam, quiz, examDetail, grade: computeTermGrade({ cw, cs, exam, quiz }) };
   });
 
-  const tg = EXAM_TERMS.map(t => termData[t].grade).filter(x => x != null);
-  const overall = tg.length > 0 ? Math.round(tg.reduce((a, b) => a + b, 0) / tg.length) : null;
+  // Null terms count as 0; divide by 4 always so empty terms drag the grade down
+  const tg = EXAM_TERMS.map(t => termData[t].grade);
+  const hasAnyTerm = tg.some(g => g != null);
+  const overall = hasAnyTerm ? Math.round(tg.reduce((a, b) => a + (b ?? 0), 0) / EXAM_TERMS.length) : null;
   const status  = overall == null ? "Pending" : overall >= 75 ? "Pass" : "Fail";
 
   if (loading) return <div style={{ padding: 40, textAlign: "center", color: C.muted }}>Loading grades…</div>;

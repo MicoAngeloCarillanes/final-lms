@@ -530,15 +530,17 @@ function PeopleTab({ course, user, allUsers, examSubmissions, enrollments }) {
     const result = {};
     EXAM_TERMS.forEach(term => {
       const cwMats = allMaterials.filter(m => m.course_id===course._uuid && m.term===term && (m.material_type==="Lab"||m.material_type==="Assignment"||m.material_type==="Project"));
-      const cwSubs = cwMats.map(m => { const w=allWorkSubs.find(w=>w.material_id===m.material_id&&w.student_id===studentUuid); return w?w.score:null; }).filter(x=>x!=null);
-      const cw = cwSubs.length>0?Math.round(cwSubs.reduce((a,b)=>a+b,0)/cwSubs.length):null;
+      // Unsubmitted assignments count as 0 — denominator is always number of materials
+      const cwScores = cwMats.map(m => { const w=allWorkSubs.find(w=>w.material_id===m.material_id&&w.student_id===studentUuid); return w?w.score:0; });
+      const cw = cwMats.length>0?Math.round(cwScores.reduce((a,b)=>a+b,0)/cwMats.length):null;
       const csEntry = classStandings.find(cs=>cs.studentUuid===studentUuid&&cs.courseUuid===course._uuid&&cs.term===term)||null;
       const cs = csGradePct(csEntry);
       const termExams = allExams.filter(ex=>ex.courseId===course.id&&ex.term===term);
       const subs = examSubmissions.filter(s=>s.studentId===studentDisplayId&&s.courseId===course.id);
       const examOnly = termExams.filter(ex=>(ex.examType||"Exam")==="Exam");
       const quizOnly = termExams.filter(ex=>ex.examType==="Quiz");
-      const toAvg = (arr) => { const p=arr.map(ex=>{const s=subs.find(s=>s.examId===ex.id);return s?Math.round((s.score/s.totalPoints)*100):null;}).filter(x=>x!=null); return p.length?Math.round(p.reduce((a,b)=>a+b,0)/p.length):null; };
+      // Untaken exams count as 0 — denominator is always number of exams
+      const toAvg = (arr) => { if (!arr.length) return null; const p=arr.map(ex=>{const s=subs.find(s=>s.examId===ex.id);return s?Math.round((s.score/s.totalPoints)*100):0;}); return Math.round(p.reduce((a,b)=>a+b,0)/p.length); };
       result[term] = { cw, cs, csEntry, exam:toAvg(examOnly), quiz:toAvg(quizOnly), grade:computeTermGrade({cw,cs,exam:toAvg(examOnly),quiz:toAvg(quizOnly)}) };
     });
     return result;
@@ -550,8 +552,11 @@ function PeopleTab({ course, user, allUsers, examSubmissions, enrollments }) {
   const rows = enrolled.map(e => {
     const student  = allUsers.find(u=>u.id===e.studentId||u._uuid===e.studentId)||{};
     const termData = getTermData(e.studentId, student._uuid);
-    const tg = EXAM_TERMS.map(t=>termData[t].grade).filter(x=>x!=null);
-    const overall = tg.length>0?Math.round(tg.reduce((a,b)=>a+b,0)/tg.length):null;
+    const tg = EXAM_TERMS.map(t=>termData[t].grade);
+    const hasAnyTerm = tg.some(g => g != null);
+    const overall = hasAnyTerm
+      ? Math.round(tg.reduce((a, b) => a + (b ?? 0), 0) / EXAM_TERMS.length)
+      : null;
     return { studentId:e.studentId, studentUuid:student._uuid, studentName:student.fullName||e.studentId, termData, overall, status:overall==null?"Pending":overall>=75?"Pass":"Fail", _student:student, _course:course };
   }).filter(r => r.studentUuid);
 

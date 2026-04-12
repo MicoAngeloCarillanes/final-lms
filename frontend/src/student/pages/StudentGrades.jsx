@@ -72,12 +72,13 @@ export default function StudentGrades({ user, courses, examSubmissions, enrollme
         m.course_id === cuuid && m.term === term &&
         (m.material_type === "Lab" || m.material_type === "Assignment")
       );
-      const cwSubs = cwMats.map(m => {
+      // Unsubmitted assignments count as 0 — denominator is always number of materials
+      const cwScores = cwMats.map(m => {
         const ws = workSubs.find(w => w.material_id === m.material_id);
-        return ws ? ws.score : null;
-      }).filter(x => x != null);
-      const cw = cwSubs.length > 0
-        ? Math.round(cwSubs.reduce((a, b) => a + b, 0) / cwSubs.length)
+        return ws ? ws.score : 0;
+      });
+      const cw = cwMats.length > 0
+        ? Math.round(cwScores.reduce((a, b) => a + b, 0) / cwMats.length)
         : null;
       const cwDetail = cwMats.map(m => ({
         title: m.title || m.material_id,
@@ -95,19 +96,20 @@ export default function StudentGrades({ user, courses, examSubmissions, enrollme
       const examOnlyItems  = termExams.filter(ex => (ex.examType || "Exam") === "Exam");
       const quizOnlyItems  = termExams.filter(ex => ex.examType === "Quiz");
 
+      // Untaken exams count as 0 — denominator is always number of exams
       const examScoresPct = examOnlyItems.map(ex => {
         const sub = examSubs.find(s => s.examId === ex.id);
-        return sub ? Math.round((sub.score / sub.totalPoints) * 100) : null;
-      }).filter(x => x != null);
+        return sub ? Math.round((sub.score / sub.totalPoints) * 100) : 0;
+      });
       const quizScoresPct = quizOnlyItems.map(ex => {
         const sub = examSubs.find(s => s.examId === ex.id);
-        return sub ? Math.round((sub.score / sub.totalPoints) * 100) : null;
-      }).filter(x => x != null);
+        return sub ? Math.round((sub.score / sub.totalPoints) * 100) : 0;
+      });
 
-      const exam = examScoresPct.length > 0
-        ? Math.round(examScoresPct.reduce((a, b) => a + b, 0) / examScoresPct.length) : null;
-      const quiz = quizScoresPct.length > 0
-        ? Math.round(quizScoresPct.reduce((a, b) => a + b, 0) / quizScoresPct.length) : null;
+      const exam = examOnlyItems.length > 0
+        ? Math.round(examScoresPct.reduce((a, b) => a + b, 0) / examOnlyItems.length) : null;
+      const quiz = quizOnlyItems.length > 0
+        ? Math.round(quizScoresPct.reduce((a, b) => a + b, 0) / quizOnlyItems.length) : null;
 
       const examDetail = termExams.map(ex => {
         const sub = examSubs.find(s => s.examId === ex.id);
@@ -127,9 +129,12 @@ export default function StudentGrades({ user, courses, examSubmissions, enrollme
       };
     });
 
-    const termGrades = EXAM_TERMS.map(t => termData[t].grade).filter(x => x != null);
-    const overall = termGrades.length > 0
-      ? Math.round(termGrades.reduce((a, b) => a + b, 0) / termGrades.length)
+    // Overall = average across all 4 terms; terms with no data count as 0.
+    // Only remains null if every single term is still untouched.
+    const termGrades = EXAM_TERMS.map(t => termData[t].grade);
+    const hasAnyTerm = termGrades.some(g => g != null);
+    const overall = hasAnyTerm
+      ? Math.round(termGrades.reduce((a, b) => a + (b ?? 0), 0) / EXAM_TERMS.length)
       : null;
 
     return {

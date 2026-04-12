@@ -7,47 +7,52 @@ export const gradeColor = (g) =>
   g >= 90 ? "#10b981" : g >= 75 ? "#f59e0b" : "#ef4444";
 
 /**
- * Grade formula:
- *   Quiz scores  (Lab/Assignment submissions) = 30%
+ * Grade formula (fixed weights — missing components count as 0):
+ *   Course Work  (Lab/Assignment submissions) = 30%
  *   Class Standing (Project + Recitation + Attendance) = 30%
  *   Exam scores  = 40%
  *
- * When a component has no data yet its weight is redistributed proportionally
- * among components that do have data so partial grades remain meaningful.
+ * If a component has no data it contributes 0% to the grade rather than
+ * having its weight redistributed. This prevents inflated grades when only
+ * some components have been graded.
+ *
+ * Returns null only when ALL components are null (nothing graded yet for the term).
  *
  * Params:
  *   quiz  – average % of Quiz-type exams for the term (or null)
  *   cw    – average % of Lab/Assignment submissions   (or null)
  *   cs    – Class Standing %                          (or null)
  *   exam  – average % of Exam-type exams              (or null)
- *
- * Note: for backward compat, if quiz is null and exam has data, exam covers
- * the full 40% weight. If both quiz and exam have data each takes its own weight.
  */
 export const computeTermGrade = ({ cw, cs, exam, quiz }) => {
-  // If both cw and quiz exist, quiz takes the cw slot (they share the same 30% bucket)
-  // Combine: average of cw and quiz scores for the 30% coursework bucket
+  // CW and Quiz share the 30% coursework bucket — average them when both exist
   const cwCombined = (cw != null && quiz != null)
     ? Math.round((cw + quiz) / 2)
     : (cw ?? quiz ?? null);
 
-  const finalParts = [
-    { val: cwCombined, w: 0.30 },
-    { val: cs,         w: 0.30 },
-    { val: exam,       w: 0.40 },
-  ].filter(p => p.val != null);
-  if (!finalParts.length) return null;
-  const totalW = finalParts.reduce((s, p) => s + p.w, 0);
-  return Math.round(finalParts.reduce((s, p) => s + p.val * (p.w / totalW), 0));
+  // Return null only if the term is entirely untouched
+  const hasAny = cwCombined != null || cs != null || exam != null;
+  if (!hasAny) return null;
+
+  // Fixed weights — null components default to 0 so the denominator is always 100%
+  return Math.round(
+    (cwCombined ?? 0) * 0.30 +
+    (cs         ?? 0) * 0.30 +
+    (exam       ?? 0) * 0.40
+  );
 };
 
 /**
  * Class Standing % = average of Project, Recitation, Attendance (each /100)
+ * If the entry exists but some components are missing, they count as 0.
+ * Returns null only when there is no CS entry at all.
  */
 export const csGradePct = (entry) => {
   if (!entry) return null;
-  const nums = [entry.project, entry.recitation, entry.attendance].filter(x => x != null);
-  return nums.length ? Math.round(nums.reduce((a, b) => a + b, 0) / nums.length) : null;
+  const hasAny = entry.project != null || entry.recitation != null || entry.attendance != null;
+  if (!hasAny) return null;
+  // Missing components count as 0 — denominator is always 3
+  return Math.round(((entry.project ?? 0) + (entry.recitation ?? 0) + (entry.attendance ?? 0)) / 3);
 };
 
 // ─── Date / Time ──────────────────────────────────────────────────────────────
