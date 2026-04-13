@@ -1,9 +1,9 @@
-import React, { useState } from "react";
-import Sidebar        from "../components/Sidebar";
-import Dashboard      from "../components/Dashboard";
+import { useState } from "react";
+import ChatPage from "../components/ChatPage";
+import Dashboard from "../components/Dashboard";
+import Sidebar from "../components/Sidebar";
 import TeacherCourses from "./pages/TeacherCourses";
 import TeacherProfile from "./pages/TeacherProfile";
-import ChatPage       from "../components/ChatPage";
 
 export default function TeacherDashboard({ user, onLogout, onUpdateUser, courses, setCourses, allUsers, examSubmissions, enrollments }) {
   const myCourses = courses.filter(c => c.teacher === user.id);

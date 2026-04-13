@@ -1,5 +1,9 @@
 import { useMemo, useState } from "react";
 
+/**
+ * LMSGrid
+ * A reusable grid component with internal pagination and sorting.
+ */
 export default function LMSGrid({ 
   columns, 
   rowData, 
@@ -26,7 +30,7 @@ export default function LMSGrid({
   }, [rowData, q]);
 
   const sorted = useMemo(() => {
-    // FIX: If parent handles sorting (API mode), do not perform internal JS sorting
+    // If parent handles sorting (API mode), do not perform internal JS sorting
     if (!activeSc || onSortChange) return filtered;
     
     return [...filtered].sort((a, b) => {
@@ -53,12 +57,15 @@ export default function LMSGrid({
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
           <thead style={{ position: "sticky", top: 0, zIndex: 1 }}>
             <tr>
-              {columns.map(col => (
-                <th key={col.field + col.header} onClick={() => col.sortable !== false && toggleSort(col.field)}
-                  style={{ padding: "9px 12px", textAlign: "left", fontWeight: 700, fontSize: 10, letterSpacing: "0.07em", textTransform: "uppercase", color: "#94a3b8", background: "#1e293b", borderBottom: "1px solid #1e293b", cursor: col.sortable !== false ? "pointer" : "default", userSelect: "none", whiteSpace: "nowrap", width: col.width || "auto" }}>
+              {columns.map((col, idx) => (
+                <th 
+                  key={idx} // FIX: Using index ensures unique keys even if field/header are missing
+                  onClick={() => col.sortable !== false && toggleSort(col.field)}
+                  style={{ padding: "9px 12px", textAlign: "left", fontWeight: 700, fontSize: 10, letterSpacing: "0.07em", textTransform: "uppercase", color: "#94a3b8", background: "#1e293b", borderBottom: "1px solid #1e293b", cursor: col.sortable !== false ? "pointer" : "default", userSelect: "none", whiteSpace: "nowrap", width: col.width || "auto" }}
+                >
                   <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
                     {col.headerRenderer ? col.headerRenderer() : col.header}
-                    {activeSc === col.field && <span style={{ color: "#6366f1" }}>{activeDir === "asc" ? "↑" : "↓"}</span>}
+                    {activeSc === col.field && col.field && <span style={{ color: "#6366f1" }}>{activeDir === "asc" ? "↑" : "↓"}</span>}
                   </span>
                 </th>
               ))}
@@ -75,8 +82,11 @@ export default function LMSGrid({
                       onMouseEnter={e => { if (!isSelected) e.currentTarget.style.background = "#1e293b"; }}
                       onMouseLeave={e => { e.currentTarget.style.background = isSelected ? "rgba(79,70,229,.15)" : i % 2 === 0 ? "#0f172a" : "#0d1829"; }}
                     >
-                      {columns.map(col => (
-                        <td key={col.field + col.header} style={{ padding: "8px 12px", color: "#cbd5e1", verticalAlign: "middle" }}>
+                      {columns.map((col, idx) => (
+                        <td 
+                          key={idx} // FIX: Consistently using index for cells as well
+                          style={{ padding: "8px 12px", color: "#cbd5e1", verticalAlign: "middle" }}
+                        >
                           {col.cellRenderer ? col.cellRenderer(row[col.field], row) : (row[col.field] ?? "—")}
                         </td>
                       ))}

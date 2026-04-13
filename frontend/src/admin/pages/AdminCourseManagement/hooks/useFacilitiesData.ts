@@ -10,7 +10,7 @@ interface SortState {
  * useFacilitiesData
  *
  * Manages campus rooms and structured schedule blocks.
- * Supports bulk operations, usage lookups, and API-level sorting.
+ * Normalizes database records to ensure unique 'id' fields for grid rendering.
  */
 export default function useFacilitiesData(
     roomSort: SortState = { field: 'room_name', dir: 'asc' },
@@ -20,6 +20,10 @@ export default function useFacilitiesData(
     const [rooms, setRooms] = useState<any[]>([]);
     const [schedules, setSchedules] = useState<any[]>([]);
 
+    /**
+     * fetchRooms
+     * Fetches and maps room_id to a standard id field.
+     */
     const fetchRooms = useCallback(async () => {
         setIsLoading(true);
         const { data, error } = await supabase
@@ -27,10 +31,16 @@ export default function useFacilitiesData(
             .select("*")
             .order(roomSort.field, { ascending: roomSort.dir === 'asc' });
         
-        if (!error) setRooms(data || []);
+        if (!error && data) {
+            setRooms(data.map(r => ({ ...r, id: r.room_id })));
+        }
         setIsLoading(false);
     }, [roomSort]);
 
+    /**
+     * fetchSchedules
+     * Fetches and maps schedule_id to a standard id field.
+     */
     const fetchSchedules = useCallback(async () => {
         setIsLoading(true);
         const { data, error } = await supabase
@@ -38,7 +48,9 @@ export default function useFacilitiesData(
             .select("*")
             .order(schedSort.field, { ascending: schedSort.dir === 'asc' });
         
-        if (!error) setSchedules(data || []);
+        if (!error && data) {
+            setSchedules(data.map(s => ({ ...s, id: s.schedule_id })));
+        }
         setIsLoading(false);
     }, [schedSort]);
 
@@ -105,15 +117,12 @@ export default function useFacilitiesData(
         return { error };
     }
 
-    /**
-     * getUsage
-     * FIX: Maps schedule lookup to 'schedule_label' as 'schedule_id' does not exist in course_sections.
-     */
     async function getUsage(type: 'room' | 'schedule', identifier: string) {
         const field = type === 'room' ? 'room_id' : 'schedule_label';
         const { data, error } = await supabase
             .from("course_sections")
             .select(`
+                section_id,
                 section_label,
                 courses (course_code, course_name),
                 academic_blocks (block_name)

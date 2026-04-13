@@ -7,8 +7,8 @@ const DAYS_SHORT = ["M", "T", "W", "Th", "F", "S", "Su"];
 
 /**
  * FacilitiesTab
- * * Logic: Manage campus Rooms and Schedule patterns with Bulk CSV, Usage insights, and Exporting.
- * * UI: Horizontal layout (stacked vertically) with server-side sorting.
+ * Manages campus facility resources. 
+ * Prevents key collision by sanitizing CSV inputs and time formatting.
  */
 export default function FacilitiesTab() {
     const [roomSort, setRoomSort] = useState<{ field: string; dir: 'asc' | 'desc' }>({ field: 'room_name', dir: 'asc' });
@@ -21,7 +21,6 @@ export default function FacilitiesTab() {
         getUsage 
     } = useFacilitiesData(roomSort, schedSort);
 
-    // UI State: Selection & Modals
     const [selRooms, setSelRooms] = useState<string[]>([]);
     const [selScheds, setSelScheds] = useState<string[]>([]);
     const [confirmAction, setConfirmAction] = useState<{ type: string; ids: string[]; msg: string } | null>(null);
@@ -29,23 +28,28 @@ export default function FacilitiesTab() {
     const [bulkModal, setBulkModal] = useState<'room' | 'schedule' | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
-    // Form States
     const [roomForm, setRoomForm] = useState({ capacity: 40, name: "" });
     const [schedForm, setSchedForm] = useState({ days: [] as string[], startTime: "07:30", endTime: "09:00" });
 
-    // Formatting & Helpers
+    /**
+     * formatTimeLabel
+     * Converts 24h input to 12h AM/PM label. Prevents NaN values on empty input.
+     */
     function formatTimeLabel(timeStr: string) {
-        if (!timeStr) return "";
+        if (!timeStr || !timeStr.includes(':')) return "TBD";
         const [h, m] = timeStr.split(':');
-        let hour = parseInt(h);
-        const ampm = hour >= 12 ? 'PM' : 'AM';
-        hour = hour % 12 || 12;
+        const hourInt = parseInt(h, 10);
+        
+        if (isNaN(hourInt)) return "TBD";
+
+        const ampm = hourInt >= 12 ? 'PM' : 'AM';
+        const hour = hourInt % 12 || 12;
         return `${hour}:${m} ${ampm}`;
     }
 
     async function handleAddRoom() {
-        if (!roomForm.name) return;
-        const { error } = await addRoom(roomForm.name, roomForm.capacity);
+        if (!roomForm.name.trim()) return;
+        const { error } = await addRoom(roomForm.name.trim(), roomForm.capacity);
         if (!error) setRoomForm({ capacity: 40, name: "" });
     }
 
@@ -57,10 +61,6 @@ export default function FacilitiesTab() {
         if (!error) setSchedForm({ days: [], startTime: "07:30", endTime: "09:00" });
     }
 
-    /**
-     * showUsage
-     * FIX: Passes the schedule_label for schedule lookups as sections are linked by label.
-     */
     async function showUsage(type: 'room' | 'schedule', item: any) {
         const identifier = type === 'room' ? item.room_id : item.schedule_label;
         const { data } = await getUsage(type, identifier);
@@ -70,7 +70,6 @@ export default function FacilitiesTab() {
         });
     }
 
-    // CSV Logic
     function downloadTemplate(type: 'room' | 'schedule') {
         const content = type === 'room' ? "room_name,capacity\nRoom 101,45" : "days,start_time,end_time\nMWF,07:30,09:00";
         const blob = new Blob([content], { type: 'text/csv' });
@@ -99,19 +98,22 @@ export default function FacilitiesTab() {
         if (!file) return;
         const reader = new FileReader();
         reader.onload = async (event) => {
-            const lines = (event.target?.result as string).split('\n').filter(l => l.trim());
+            const lines = (event.target?.result as string).split(/\r?\n/).filter(l => l.trim().length > 0);
             const dataRows = lines.slice(1);
+
             if (type === 'room') {
                 const payload = dataRows.map(line => {
-                    const [name, cap] = line.split(',');
-                    return { room_name: name.trim(), capacity: parseInt(cap) || 40 };
+                    const columns = line.split(',');
+                    const name = columns[0]?.trim() || "New Room";
+                    const cap = parseInt(columns[1], 10);
+                    return { room_name: name, capacity: isNaN(cap) ? 40 : cap };
                 });
                 await bulkAddRooms(payload);
             } else {
                 const payload = dataRows.map(line => {
-                    const [days, start, end] = line.split(',');
-                    const label = `${days} ${formatTimeLabel(start.trim())} - ${formatTimeLabel(end.trim())}`;
-                    return { day_pattern: days.trim(), time_start: start.trim(), time_end: end.trim(), schedule_label: label };
+                    const [days, start, end] = line.split(',').map(c => c?.trim());
+                    const label = `${days || 'TBD'} ${formatTimeLabel(start)} - ${formatTimeLabel(end)}`;
+                    return { day_pattern: days || 'TBD', time_start: start || '00:00', time_end: end || '00:00', schedule_label: label };
                 });
                 await bulkAddSchedules(payload);
             }
@@ -172,7 +174,7 @@ export default function FacilitiesTab() {
     return (
         <div style={{ display: "flex", flex: 1, flexDirection: "column", gap: "24px", padding: "24px", position: "relative", overflowY: "auto" }}>
             
-            {/* SCHEDULES PANEL (TOP) */}
+            {/* SCHEDULES PANEL */}
             <div style={{ background: "#1e293b", borderRadius: "8px", display: "flex", flexDirection: "column", padding: "20px", minHeight: "400px" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "16px", alignItems: "center" }}>
                     <h3 style={{ color: "#f1f5f9", margin: 0 }}>Manage Schedules</h3>
@@ -207,7 +209,7 @@ export default function FacilitiesTab() {
                 </div>
             </div>
 
-            {/* ROOMS PANEL (BOTTOM) */}
+            {/* ROOMS PANEL */}
             <div style={{ background: "#1e293b", borderRadius: "8px", display: "flex", flexDirection: "column", padding: "20px", minHeight: "400px" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "16px", alignItems: "center" }}>
                     <h3 style={{ color: "#f1f5f9", margin: 0 }}>Campus Rooms</h3>
@@ -259,9 +261,9 @@ export default function FacilitiesTab() {
                         <h3 style={{ color: "#f1f5f9", marginTop: 0, marginBottom: "16px" }}>{usageDetail.title}</h3>
                         <div style={{ background: "#0f172a", borderRadius: "6px", padding: "16px", maxHeight: "400px", overflowY: "auto", border: "1px solid #334155" }}>
                             {usageDetail.data.length > 0 ? usageDetail.data.map((sec, i) => (
-                                <div key={i} style={{ padding: "12px", borderBottom: i !== usageDetail.data.length - 1 ? "1px solid #1e293b" : "none", color: "#e2e8f0", fontSize: "13px" }}>
-                                    <span style={{ color: "#3b82f6", fontWeight: 700 }}>{sec.courses.course_code}</span>: {sec.section_label} 
-                                    <span style={{ color: "#64748b", marginLeft: "8px" }}>— {sec.academic_blocks.block_name}</span>
+                                <div key={sec.section_id || i} style={{ padding: "12px", borderBottom: i !== usageDetail.data.length - 1 ? "1px solid #1e293b" : "none", color: "#e2e8f0", fontSize: "13px" }}>
+                                    <span style={{ color: "#3b82f6", fontWeight: 700 }}>{sec.courses?.course_code || 'N/A'}</span>: {sec.section_label} 
+                                    <span style={{ color: "#64748b", marginLeft: "8px" }}>— {sec.academic_blocks?.block_name || 'N/A'}</span>
                                 </div>
                             )) : <p style={{ color: "#64748b", textAlign: "center", padding: "20px" }}>No course sections are currently using this facility.</p>}
                         </div>
