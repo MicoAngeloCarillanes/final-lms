@@ -14,8 +14,17 @@ interface SectionSetupModalProps {
 /**
  * SectionSetupModal
  * * Logic: Handles creation/editing of course sections.
- * * Integrated Course Logic: If a LEC or LAB course is selected, it automatically creates both sections 
+ * * Integrated Course Logic: If a LEC or LAB course is selected, it automatically creates both sections
  * to maintain structural parity in the offerings list.
+ *
+ * FIX: Removed the teacher_course_assignments delete-then-insert sync block.
+ * That block deleted ALL teacher assignments for a course_id before inserting the new one,
+ * which erased Pansit Kanton's assignment the moment Teacher 123's section was saved for
+ * the same course concept (both CS101_LAB sections share the same course_id in that table).
+ *
+ * App.jsx now reads the assigned teacher directly from course_sections.teacher_id, so
+ * teacher_course_assignments no longer drives the teacher→course relationship on the
+ * teacher or student dashboards. The sync block is therefore both unnecessary and harmful.
  */
 export default function SectionSetupModal({
     courseId,
@@ -26,7 +35,7 @@ export default function SectionSetupModal({
     const [isSaving, setIsSaving] = useState(false);
     const [showConfirm, setShowConfirm] = useState(false);
     const [alert, setAlert] = useState<{ msg: string; type: 'error' | 'success' } | null>(null);
-    
+
     const { academicBlocks, courses, faculty, schedules, schoolYears } = useReferenceData();
 
     const [form, setForm] = useState({
@@ -35,8 +44,8 @@ export default function SectionSetupModal({
         programId: initialData?.program_id || "",
         roomId: initialData?.room_id || "",
         scheduleLabel: initialData?.schedule_label || "",
-        sectionLabel: initialData?.section_label || "", 
-        selectedCourseId: courseId || initialData?.course_id || "", 
+        sectionLabel: initialData?.section_label || "",
+        selectedCourseId: courseId || initialData?.course_id || "",
         semester: initialData?.semester || "1st Semester",
         syId: initialData?.sy_id || "",
         teacherId: initialData?.teacher_id || "",
@@ -68,14 +77,14 @@ export default function SectionSetupModal({
 
         const isIntegrated = selectedCourse.course_code.endsWith("_LEC") || selectedCourse.course_code.endsWith("_LAB");
         const baseCode = selectedCourse.course_code.replace(/_(LEC|LAB)$/, '');
-        
+
         // Identify if we need to create a pair
-        const targetCourses = (!initialData && isIntegrated) 
+        const targetCourses = (!initialData && isIntegrated)
             ? courses.filter(c => c.course_code.startsWith(baseCode + "_"))
             : [selectedCourse];
 
         const payload = [];
-        
+
         // Generate Section Label Sequence (S1, S2, etc.)
         let nextNum = 1;
         if (!initialData) {
@@ -99,14 +108,14 @@ export default function SectionSetupModal({
         const semCode = form.semester === '1st Semester' ? '1' : (form.semester === '2nd Semester' ? '2' : 'S');
 
         for (const course of targetCourses) {
-            const sectionLabel = initialData 
-                ? form.sectionLabel 
+            const sectionLabel = initialData
+                ? form.sectionLabel
                 : `${course.course_code}-${yearShort}-${semCode}-S${nextNum}`;
 
             payload.push({
                 block_id: form.blockId || null,
-                course_id: course.course_id, 
-                max_capacity: form.maxCapacity, 
+                course_id: course.course_id,
+                max_capacity: form.maxCapacity,
                 program_id: form.programId || null,
                 room_id: form.roomId || null,
                 schedule_label: form.scheduleLabel || null,
@@ -126,12 +135,21 @@ export default function SectionSetupModal({
         }
 
         if (!res.error) {
+            // ── Teacher assignment is now fully handled by course_sections.teacher_id ──
+            // App.jsx reads teacher info directly from that column, so no additional sync
+            // to teacher_course_assignments is required here.
+            //
+            // The previous sync block (delete all by course_id → insert new) was the root
+            // cause of the isolation bug: creating a second CS101_LAB section for a different
+            // teacher wiped the first teacher's assignment because both sections share the
+            // same course_id in that table.  It has been intentionally removed.
+
             onSave();
             onClose();
         } else {
             showAlert("Database Error: " + res.error.message);
         }
-        
+
         setIsSaving(false);
         setShowConfirm(false);
     }
@@ -152,7 +170,7 @@ export default function SectionSetupModal({
 
     return (
         <div style={{ alignItems: "center", background: "rgba(0,0,0,0.5)", bottom: 0, display: "flex", justifyContent: "center", left: 0, position: "fixed", right: 0, top: 0, zIndex: 1000 }}>
-            
+
             {alert && (
                 <div style={{ left: "50%", padding: "12px 24px", position: "fixed", top: "40px", transform: "translateX(-50%)", zIndex: 9999, background: alert.type === 'error' ? "#ef4444" : "#10b981", borderRadius: "8px", color: "white", boxShadow: "0 4px 12px rgba(0,0,0,0.3)", fontWeight: 600 }}>
                     {alert.msg}
@@ -160,7 +178,7 @@ export default function SectionSetupModal({
             )}
 
             <div style={{ background: "#1e293b", borderRadius: "8px", padding: "24px", width: "500px", maxWidth: "90%", position: "relative" }}>
-                
+
                 <h3 style={{ color: "#f1f5f9", margin: "0 0 16px 0" }}>
                     {initialData ? 'Edit Section Setup' : 'Create New Section'}
                 </h3>
@@ -174,7 +192,7 @@ export default function SectionSetupModal({
                 {!courseId && (
                     <div style={{ marginBottom: "16px" }}>
                         <FF label="Select Course">
-                            <SearchableSelect 
+                            <SearchableSelect
                                 options={courseOptions}
                                 value={form.selectedCourseId}
                                 onChange={(val: any) => setForm({ ...form, selectedCourseId: val })}
@@ -191,28 +209,28 @@ export default function SectionSetupModal({
                          </div>
                     </FF>
                     <FF label="Max Capacity">
-                        <Input 
-                            type="number" 
+                        <Input
+                            type="number"
                             placeholder="∞ (Blank = no limit)"
-                            value={form.maxCapacity ?? ""} 
-                            onChange={(e) => setForm({ ...form, maxCapacity: e.target.value === "" ? null : Number(e.target.value) })} 
+                            value={form.maxCapacity ?? ""}
+                            onChange={(e) => setForm({ ...form, maxCapacity: e.target.value === "" ? null : Number(e.target.value) })}
                         />
                     </FF>
                 </div>
 
                 <div style={{ display: "grid", gap: "12px", gridTemplateColumns: "1fr 1fr", marginBottom: "16px" }}>
                     <FF label="School Year">
-                        <SearchableSelect 
-                            options={syOptions} 
-                            value={form.syId} 
+                        <SearchableSelect
+                            options={syOptions}
+                            value={form.syId}
                             onChange={(val: any) => setForm({ ...form, syId: val })}
                             placeholder="Search School Year..."
                         />
                     </FF>
                     <FF label="Semester">
-                        <SearchableSelect 
-                            options={semesterOptions} 
-                            value={form.semester} 
+                        <SearchableSelect
+                            options={semesterOptions}
+                            value={form.semester}
                             onChange={(val: any) => setForm({ ...form, semester: val })}
                             placeholder="Search Semester..."
                         />
@@ -220,9 +238,9 @@ export default function SectionSetupModal({
                 </div>
 
                 <FF label="Academic Block (Cohort)" style={{ marginBottom: "16px" }}>
-                    <SearchableSelect 
-                        options={blockOptions} 
-                        value={form.blockId} 
+                    <SearchableSelect
+                        options={blockOptions}
+                        value={form.blockId}
                         onChange={(val: any) => setForm({ ...form, blockId: val })}
                         placeholder="Search Academic Block..."
                     />

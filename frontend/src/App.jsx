@@ -59,97 +59,109 @@ export default function App() {
         loadUsers();
     }, []);
 
-    // ── Load courses ───────────────────────────────────────────────────────────────────────────────────
+    // ── Load courses ──────────────────────────────────────────────────────────────
+    // FIX: Read from course_sections so each section is its own isolated room.
+    // Using section_id as the identity key (id + _uuid) means:
+    //   • exams / materials created by a teacher are stored against section_id → not shared
+    //   • enrollment matching uses section_id → students only see their section's content
+    //   • two CS101_LAB sections (different blocks/teachers) are fully independent
     useEffect(() => {
         async function loadCourses() {
-            const { data: rawCourses, error } = await supabase
-                .from('courses')
-                .select('course_id, course_code, course_name, units');
+            const { data: sections, error } = await supabase
+                .from('course_sections')
+                .select('section_id, course_id, section_label, teacher_id, schedule_label, semester, year_level, sy_id, block_id, program_id, room_id, max_capacity');
 
-            if (error || !rawCourses) return;
-            const courseIds = rawCourses.map((c) => c.course_id);
+            if (error || !sections) return;
 
-            const schMap = {};
+            // Fetch course metadata (code, name, units) for the underlying course concepts
+            const courseIds = [...new Set(sections.map((s) => s.course_id).filter(Boolean))];
+            const courseMap = {};
             if (courseIds.length) {
-                const { data: schData } = await supabase
-                    .from('schedules')
-                    .select('schedule_id, course_id, schedule_label, year_level, semester, academic_year, room')
-                    .in('course_id', courseIds);
-                (schData ?? []).forEach((row) => { schMap[row.course_id] = row; });
+                const { data: coursesData } = await supabase
+                    .from('courses')
+                    .select('course_id, course_code, course_name, units');
+                (coursesData ?? []).forEach((c) => { courseMap[c.course_id] = c; });
             }
 
-            const { data: tcaData } = await supabase
-                .from('teacher_course_assignments')
-                .select('course_id, teacher_id, assigned_at')
-                .in('course_id', courseIds)
-                .order('assigned_at', { ascending: false });
-
-            const tcaMap = {};
-            (tcaData ?? []).forEach((row) => {
-                if (!tcaMap[row.course_id]) tcaMap[row.course_id] = row.teacher_id;
-            });
-
-            const teacherIds = [...new Set(Object.values(tcaMap).filter(Boolean))];
-            let teacherMap = {};
+            // Fetch teacher display info directly from course_sections.teacher_id
+            // (No longer reading from teacher_course_assignments — that table is course-scoped
+            //  and caused the "last writer wins" erasure bug in SectionSetupModal.)
+            const teacherIds = [...new Set(sections.map((s) => s.teacher_id).filter(Boolean))];
+            const teacherMap = {};
             if (teacherIds.length) {
                 const { data: tUsers } = await supabase
                     .from('users')
                     .select('user_id, display_id, full_name')
                     .in('user_id', teacherIds);
-                (tUsers || []).forEach((u) => { teacherMap[u.user_id] = u; });
+                (tUsers ?? []).forEach((u) => { teacherMap[u.user_id] = u; });
             }
 
-            setCourses(rawCourses.map((c) => {
-                const sch = schMap[c.course_id] ?? null;
-                const tId = tcaMap[c.course_id] ?? null;
-                const teacher = tId ? teacherMap[tId] ?? null : null;
-                return {
-                    id: c.course_code,
-                    code: c.course_code,
-                    name: c.course_name,
-                    teacher: teacher?.display_id || '',
-                    teacherName: teacher?.full_name || 'Unassigned',
-                    schedule: sch?.schedule_label || '',
-                    units: c.units,
-                    yearLevel: sch?.year_level || '',
-                    semester: sch?.semester || '',
-                    room: sch?.room || '',
-                    status: 'Ongoing',
-                    _uuid: c.course_id,
-                    _scheduleId: sch?.schedule_id ?? null
-                };
-            }));
+            setCourses(
+                sections.map((sec) => {
+                    const c       = courseMap[sec.course_id] ?? {};
+                    const teacher = sec.teacher_id ? (teacherMap[sec.teacher_id] ?? null) : null;
+                    return {
+                        // KEY: section_id is the isolation key — every downstream consumer
+                        // (TeacherCourses, StudentCourses) uses course.id / course._uuid to
+                        // query exams, materials, announcements, class_standing.  Pointing both
+                        // at section_id means content created in one section stays in that section.
+                        id:           sec.section_id,
+                        _uuid:        sec.section_id,
+
+                        // Keep the original course_id available for admin lookups / display
+                        _courseId:    sec.course_id,
+                        _sectionId:   sec.section_id,
+
+                        code:         c.course_code    ?? '',
+                        name:         c.course_name    ?? '',
+                        units:        c.units          ?? 0,
+
+                        // Teacher filtered in TeacherCourses via: courses.filter(c => c.teacher === user.id)
+                        teacher:      teacher?.display_id  || '',
+                        teacherName:  teacher?.full_name   || 'Unassigned',
+
+                        schedule:     sec.schedule_label   || '',
+                        yearLevel:    sec.year_level       || '',
+                        semester:     sec.semester         || '',
+                        room:         sec.room_id          || '',
+                        status:       'Ongoing',
+
+                        // Legacy field kept so any remaining callers don't break
+                        _scheduleId:  null,
+                    };
+                })
+            );
         }
         loadCourses();
     }, []);
 
-    // ── Load enrollments ──
+    // ── Load enrollments ──────────────────────────────────────────────────────────
+    // FIX: Use section_id directly as courseId instead of resolving it back to
+    // the shared course_id.  Matches the new courses[].id = section_id above.
     useEffect(() => {
         async function loadEnrollments() {
-            const [uRes, cRes] = await Promise.all([
-                supabase.from('users').select('user_id, display_id').eq('role', 'student'),
-                supabase.from('courses').select('course_id, course_code'),
-            ]);
-            const uMap = {}; const cMap = {};
-            (uRes.data || []).forEach((u) => { uMap[u.user_id] = u.display_id; });
-            (cRes.data || []).forEach((c) => { cMap[c.course_id] = c.course_code; });
+            const { data: uRes } = await supabase
+                .from('users')
+                .select('user_id, display_id')
+                .eq('role', 'student');
+
+            const uMap = {};
+            (uRes || []).forEach((u) => { uMap[u.user_id] = u.display_id; });
 
             const { data: sseData } = await supabase
                 .from('student_section_assignments')
                 .select('student_id, section_id, final_grade, enrollment_status');
 
             if (sseData) {
-                const sectionIds = [...new Set(sseData.map((r) => r.section_id))];
-                const { data: sectData } = await supabase.from('course_sections').select('section_id, course_id').in('section_id', sectionIds);
-                const sectCourseMap = {};
-                (sectData || []).forEach((s) => { sectCourseMap[s.section_id] = s.course_id; });
-
-                const merged = sseData.map(row => ({
-                    studentId: uMap[row.student_id] || String(row.student_id),
-                    courseId: cMap[sectCourseMap[row.section_id]] || null,
-                    grade: row.final_grade ?? null,
-                    status: row.enrollment_status || 'Enrolled'
-                })).filter(r => r.courseId);
+                // section_id IS the course identity now — no extra lookup needed.
+                const merged = sseData
+                    .map((row) => ({
+                        studentId: uMap[row.student_id] || String(row.student_id),
+                        courseId:  row.section_id,   // section-scoped, not shared course_id
+                        grade:     row.final_grade   ?? null,
+                        status:    row.enrollment_status || 'Enrolled',
+                    }))
+                    .filter((r) => r.courseId);
 
                 setEnrollments(merged);
             }
@@ -190,7 +202,7 @@ export default function App() {
     };
 
     // ── Final Render Switch Logic ───────────────────────────────────────────────
-    // This is where your SPA-style logic remains unchanged. 
+    // This is where your SPA-style logic remains unchanged.
     // The Router only manages getting the user TO this component.
     if (!currentUser) return <LoginPage onLogin={handleLogin} />;
 
