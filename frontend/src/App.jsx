@@ -16,8 +16,26 @@ import StudentDashboard from "./student/StudentDashboard";
 import SubAdminDashboard from "./sub-admin/SubAdminDashboard";
 import TeacherDashboard from "./teacher/TeacherDashboard";
 
+// ── Session persistence helpers ───────────────────────────────────────────────
+const SESSION_KEY = "lms_user";
+
+function saveSession(user) {
+    try { localStorage.setItem(SESSION_KEY, JSON.stringify(user)); } catch {}
+}
+function clearSession() {
+    try { localStorage.removeItem(SESSION_KEY); } catch {}
+}
+function loadSession() {
+    try {
+        const raw = localStorage.getItem(SESSION_KEY);
+        if (raw) return JSON.parse(raw); // already normalized when saved — do NOT re-run normalizeUser
+    } catch {}
+    return null;
+}
+
 export default function App() {
-    const [currentUser, setCurrentUser] = useState(null);
+    // Lazy initializer reads persisted session so a page reload keeps the user logged in
+    const [currentUser, setCurrentUser] = useState(() => loadSession());
     const [users, setUsers] = useState([]);
     const [courses, setCourses] = useState([]);
     const [enrollments, setEnrollments] = useState([]);
@@ -59,74 +77,70 @@ export default function App() {
         loadUsers();
     }, []);
 
-    // ── Load courses ──────────────────────────────────────────────────────────────
-    // FIX: Read from course_sections so each section is its own isolated room.
-    // Using section_id as the identity key (id + _uuid) means:
-    //   • exams / materials created by a teacher are stored against section_id → not shared
-    //   • enrollment matching uses section_id → students only see their section's content
-    //   • two CS101_LAB sections (different blocks/teachers) are fully independent
+    // ── Load courses (section-scoped) ─────────────────────────────────────────
+    //
+    // ROOT CAUSE FIX (Bug 1):
+    //   Previously read from `courses`, using course_id as id/_uuid.
+    //   Both CS101_LAB sections shared one course_id → one content bucket.
+    //
+    //   Now reads from `course_sections`. Each section becomes its own course
+    //   object where id = _uuid = section_id. Because every downstream consumer
+    //   (materials, exams, attendance, announcements) keys on course._uuid, all
+    //   content is now fully isolated per section automatically.
+    // ─────────────────────────────────────────────────────────────────────────
     useEffect(() => {
         async function loadCourses() {
             const { data: sections, error } = await supabase
                 .from('course_sections')
-                .select('section_id, course_id, section_label, teacher_id, schedule_label, semester, year_level, sy_id, block_id, program_id, room_id, max_capacity');
+                .select(`
+                    section_id,
+                    course_id,
+                    teacher_id,
+                    schedule_label,
+                    year_level,
+                    semester,
+                    sy_id,
+                    block_id,
+                    section_label,
+                    courses (course_code, course_name, units, status)
+                `);
 
             if (error || !sections) return;
 
-            // Fetch course metadata (code, name, units) for the underlying course concepts
-            const courseIds = [...new Set(sections.map((s) => s.course_id).filter(Boolean))];
-            const courseMap = {};
-            if (courseIds.length) {
-                const { data: coursesData } = await supabase
-                    .from('courses')
-                    .select('course_id, course_code, course_name, units');
-                (coursesData ?? []).forEach((c) => { courseMap[c.course_id] = c; });
-            }
-
-            // Fetch teacher display info directly from course_sections.teacher_id
-            // (No longer reading from teacher_course_assignments — that table is course-scoped
-            //  and caused the "last writer wins" erasure bug in SectionSetupModal.)
-            const teacherIds = [...new Set(sections.map((s) => s.teacher_id).filter(Boolean))];
-            const teacherMap = {};
+            // Resolve teacher display info from users table
+            const teacherIds = [...new Set(sections.map(s => s.teacher_id).filter(Boolean))];
+            let teacherMap = {};
             if (teacherIds.length) {
                 const { data: tUsers } = await supabase
                     .from('users')
                     .select('user_id, display_id, full_name')
                     .in('user_id', teacherIds);
-                (tUsers ?? []).forEach((u) => { teacherMap[u.user_id] = u; });
+                (tUsers || []).forEach(u => { teacherMap[u.user_id] = u; });
             }
 
             setCourses(
-                sections.map((sec) => {
-                    const c       = courseMap[sec.course_id] ?? {};
-                    const teacher = sec.teacher_id ? (teacherMap[sec.teacher_id] ?? null) : null;
+                sections.map(s => {
+                    const courseRow = s.courses ?? {};
+                    const teacher   = s.teacher_id ? teacherMap[s.teacher_id] ?? null : null;
                     return {
-                        // KEY: section_id is the isolation key — every downstream consumer
-                        // (TeacherCourses, StudentCourses) uses course.id / course._uuid to
-                        // query exams, materials, announcements, class_standing.  Pointing both
-                        // at section_id means content created in one section stays in that section.
-                        id:           sec.section_id,
-                        _uuid:        sec.section_id,
-
-                        // Keep the original course_id available for admin lookups / display
-                        _courseId:    sec.course_id,
-                        _sectionId:   sec.section_id,
-
-                        code:         c.course_code    ?? '',
-                        name:         c.course_name    ?? '',
-                        units:        c.units          ?? 0,
-
-                        // Teacher filtered in TeacherCourses via: courses.filter(c => c.teacher === user.id)
-                        teacher:      teacher?.display_id  || '',
-                        teacherName:  teacher?.full_name   || 'Unassigned',
-
-                        schedule:     sec.schedule_label   || '',
-                        yearLevel:    sec.year_level       || '',
-                        semester:     sec.semester         || '',
-                        room:         sec.room_id          || '',
-                        status:       'Ongoing',
-
-                        // Legacy field kept so any remaining callers don't break
+                        // KEY FIX: id & _uuid = section_id, NOT course_id.
+                        // All content (exams, materials, attendance) stored with
+                        // course_id = section_id is now isolated per section.
+                        id:           s.section_id,
+                        _uuid:        s.section_id,
+                        _courseId:    s.course_id,       // real courses.course_id (for status updates)
+                        code:         courseRow.course_code  || '',
+                        name:         courseRow.course_name  || '',
+                        units:        courseRow.units         || 0,
+                        teacher:      teacher?.display_id    || '',
+                        teacherName:  teacher?.full_name     || 'Unassigned',
+                        teacherUuid:  s.teacher_id           || null,
+                        schedule:     s.schedule_label       || '',
+                        yearLevel:    s.year_level           || '',
+                        semester:     s.semester             || '',
+                        sectionLabel: s.section_label        || '',
+                        blockId:      s.block_id             || null,
+                        status:       courseRow.status        || 'Ongoing',
                         _scheduleId:  null,
                     };
                 })
@@ -135,34 +149,40 @@ export default function App() {
         loadCourses();
     }, []);
 
-    // ── Load enrollments ──────────────────────────────────────────────────────────
-    // FIX: Use section_id directly as courseId instead of resolving it back to
-    // the shared course_id.  Matches the new courses[].id = section_id above.
+    // ── Load enrollments ──────────────────────────────────────────────────────
+    //
+    // ROOT CAUSE FIX (Bug 2):
+    //   Previously mapped section_id → course_id, collapsing both sections of
+    //   CS101_LAB into the same courseId. Students in different blocks saw the
+    //   same content because they landed in the same course room.
+    //
+    //   Now courseId = section_id directly, so each student sees only their
+    //   specific section's materials, exams, and grades.
+    // ─────────────────────────────────────────────────────────────────────────
     useEffect(() => {
         async function loadEnrollments() {
-            const { data: uRes } = await supabase
+            // Map student user_id → display_id
+            const { data: uData } = await supabase
                 .from('users')
                 .select('user_id, display_id')
                 .eq('role', 'student');
-
             const uMap = {};
-            (uRes || []).forEach((u) => { uMap[u.user_id] = u.display_id; });
+            (uData || []).forEach(u => { uMap[u.user_id] = u.display_id; });
 
+            // section_id IS the isolated course room — no further mapping needed
             const { data: sseData } = await supabase
                 .from('student_section_assignments')
                 .select('student_id, section_id, final_grade, enrollment_status');
 
             if (sseData) {
-                // section_id IS the course identity now — no extra lookup needed.
                 const merged = sseData
-                    .map((row) => ({
+                    .map(row => ({
                         studentId: uMap[row.student_id] || String(row.student_id),
-                        courseId:  row.section_id,   // section-scoped, not shared course_id
-                        grade:     row.final_grade   ?? null,
+                        courseId:  row.section_id,        // section_id = unique course room
+                        grade:     row.final_grade ?? null,
                         status:    row.enrollment_status || 'Enrolled',
                     }))
-                    .filter((r) => r.courseId);
-
+                    .filter(r => r.courseId && r.studentId);
                 setEnrollments(merged);
             }
         }
@@ -193,23 +213,30 @@ export default function App() {
     };
 
     const handleLogin = async(normalizedUser) => {
+        let enriched = normalizedUser;
         if (normalizedUser.role === 'sub_admin') {
             const { data: saRow } = await supabase.from('sub_admins').select('scope, scope_ref').eq('user_id', normalizedUser._uuid).maybeSingle();
-            setCurrentUser({ ...normalizedUser, subAdminScope: saRow?.scope || 'other', subAdminScopeRef: saRow?.scope_ref || '' });
-        } else {
-            setCurrentUser(normalizedUser);
+            enriched = { ...normalizedUser, subAdminScope: saRow?.scope || 'other', subAdminScopeRef: saRow?.scope_ref || '' };
         }
+        // Persist the fully-enriched user so reloads restore the correct session
+        saveSession(enriched);
+        setCurrentUser(enriched);
+    };
+
+    const handleLogout = () => {
+        clearSession();
+        setCurrentUser(null);
     };
 
     // ── Final Render Switch Logic ───────────────────────────────────────────────
-    // This is where your SPA-style logic remains unchanged.
+    // This is where your SPA-style logic remains unchanged. 
     // The Router only manages getting the user TO this component.
     if (!currentUser) return <LoginPage onLogin={handleLogin} />;
 
     if (currentUser.role === 'admin') {
         return (
             <AdminDashboard
-                user={currentUser} onLogout={() => setCurrentUser(null)}
+                user={currentUser} onLogout={handleLogout}
                 users={users} setUsers={setUsers}
                 courses={courses} setCourses={setCourses}
                 enrollments={enrollments} setEnrollments={setEnrollments}
@@ -218,13 +245,13 @@ export default function App() {
     }
 
     if (currentUser.role === 'sub_admin') {
-        return <SubAdminDashboard user={currentUser} users={users} onLogout={() => setCurrentUser(null)} />;
+        return <SubAdminDashboard user={currentUser} users={users} onLogout={handleLogout} />;
     }
 
     if (currentUser.role === 'student') {
         return (
             <StudentDashboard
-                user={currentUser} onLogout={() => setCurrentUser(null)}
+                user={currentUser} onLogout={handleLogout}
                 courses={courses} enrollments={enrollments}
                 examSubmissions={examSubmissions} onSubmitExam={handleSubmitExam}
                 onUpdateUser={setCurrentUser}
@@ -234,7 +261,7 @@ export default function App() {
 
     return (
         <TeacherDashboard
-            user={currentUser} onLogout={() => setCurrentUser(null)}
+            user={currentUser} onLogout={handleLogout}
             courses={courses} setCourses={setCourses} allUsers={users}
             enrollments={enrollments} examSubmissions={examSubmissions}
             onUpdateUser={setCurrentUser}

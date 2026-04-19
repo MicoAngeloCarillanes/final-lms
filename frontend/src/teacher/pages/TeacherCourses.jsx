@@ -516,7 +516,7 @@ function PeopleTab({ course, user, allUsers, examSubmissions, enrollments }) {
         supabase.from("materials").select("material_id,course_id,material_type,term,total_points,title").eq("course_id", course._uuid),
         supabase.from("class_standing").select("*").eq("course_id", course._uuid),
       ]);
-      if (eRes.data) setAllExams(eRes.data.map(r => normalizeExam({ ...r, courses:{ course_code:course.id }, exam_questions:(qRes.data||[]).filter(q=>q.exam_id===r.exam_id) })));
+      if (eRes.data) setAllExams(eRes.data.map(r => normalizeExam({ ...r, exam_questions:(qRes.data||[]).filter(q=>q.exam_id===r.exam_id) })));
       const matIds = (mRes.data||[]).map(m => m.material_id);
       let ws = [];
       if (matIds.length) { const {data} = await supabase.from("work_submissions").select("material_id,student_id,score,status").in("material_id",matIds).eq("status","Graded"); ws = data||[]; }
@@ -683,7 +683,8 @@ function CourseRoom({ course, user, mats, exams, enrollments, allUsers, examSubm
 
   const toggleStatus = async () => {
     const next = course.status === "Finished" ? "Ongoing" : "Finished";
-    await supabase.from("courses").update({ status: next }).eq("course_id", course._uuid);
+    // Use _courseId (the real courses.course_id) — course._uuid is now section_id
+    await supabase.from("courses").update({ status: next }).eq("course_id", course._courseId || course._uuid);
     setCourses(prev => prev.map(c => c._uuid===course._uuid?{...c,status:next}:c));
   };
 
@@ -812,8 +813,6 @@ export default function TeacherCourses({ user, courses, setCourses, allUsers, en
   // Load materials + exams for all my courses
   useEffect(() => {
     async function load() {
-      const uuidToCode = {};
-      courses.forEach(c => { if (c._uuid) uuidToCode[c._uuid] = c.id; });
       const uuids = myCourses.map(c => c._uuid).filter(Boolean);
       if (!uuids.length) return;
       const [mRes, eRes, qRes] = await Promise.all([
@@ -821,8 +820,8 @@ export default function TeacherCourses({ user, courses, setCourses, allUsers, en
         supabase.from("exams").select("*").in("course_id", uuids),
         supabase.from("exam_questions").select("*"),
       ]);
-      if (mRes.data) setMats(mRes.data.map(r => normalizeMaterial({ ...r, courses:{ course_code:uuidToCode[r.course_id]||r.course_id } })));
-      if (eRes.data) setExams(eRes.data.map(r => normalizeExam({ ...r, courses:{ course_code:uuidToCode[r.course_id]||r.course_id }, exam_questions:(qRes.data||[]).filter(q=>q.exam_id===r.exam_id) })));
+      if (mRes.data) setMats(mRes.data.map(r => normalizeMaterial(r)));
+      if (eRes.data) setExams(eRes.data.map(r => normalizeExam({ ...r, exam_questions:(qRes.data||[]).filter(q=>q.exam_id===r.exam_id) })));
     }
     load();
    
@@ -848,7 +847,7 @@ export default function TeacherCourses({ user, courses, setCourses, allUsers, en
       try { url = await uploadFileToStorage("materials", path, pendingFile); await supabase.from("materials").update({attachment_url:url}).eq("material_id",newMat.material_id); }
       catch(e) { onErr("Saved but upload failed: "+e.message); }
     }
-    setMats(prev => [...prev, normalizeMaterial({...newMat,attachment_url:url,courses:{course_code:selCourse.id}})]);
+    setMats(prev => [...prev, normalizeMaterial({...newMat,attachment_url:url})]);
     onDone();
   };
 
@@ -895,7 +894,7 @@ export default function TeacherCourses({ user, courses, setCourses, allUsers, en
             const qRows=saved.questions.map((q,i)=>({exam_id:newExam.exam_id,question_type:q.type,question_text:q.questionText,options:q.type==="MCQ"?q.options:null,correct_answer:q.correctAnswer,points:q.points,sort_order:i}));
             await supabase.from("exam_questions").insert(qRows);
           }
-          setExams(prev=>[...prev,{...saved,id:newExam.exam_id,courseId:selCourse.id}]);
+          setExams(prev=>[...prev,{...saved,id:newExam.exam_id,courseId:selCourse._uuid}]);
           setBuildingExam(null);
           showToast(`"${saved.title}" saved!`);
         }}
